@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>DMR Universal</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', system-ui, sans-serif; background: #eef2f7; }
+    input[type=number]::-webkit-inner-spin-button,
+    input[type=number]::-webkit-outer-spin-button { opacity: 1; }
+    select { cursor: pointer; }
+    button { font-family: inherit; }
+    kbd {
+      background: #f3f4f6; border: 1px solid #d1d5db;
+      border-radius: 3px; padding: 1px 5px;
+      font-family: monospace; font-size: 10px;
+    }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+const { useState, useRef, useEffect, createElement: h, Fragment } = React;
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+const MONTHS = ["January","February","March","April","May","June",
+                "July","August","September","October","November","December"];
+const CY = new Date().getFullYear();
+const YEARS = Array.from({ length: 6 }, (_, i) => CY - 2 + i);
+const fmt1 = v => v !== null ? parseFloat(v.toFixed(1)) : null;
+const disp = v => v !== null ? v.toFixed(1) : null;
+
+function daysInMonth(month, year) {
+  return new Date(year, MONTHS.indexOf(month) + 1, 0).getDate();
+}
+
+function interpolateFlow(tot, day1) {
+  const n = tot.length, flows = new Array(n).fill(null);
+  flows[0] = day1;
+  for (let i = 1; i < n; i++)
+    if (tot[i] !== null && tot[i-1] !== null) flows[i] = tot[i] - tot[i-1];
+  for (let i = 1; i < n; i++) {
+    if (flows[i] !== null) continue;
+    let li = -1, ni = -1;
+    for (let j = i-1; j >= 0; j--) { if (tot[j] !== null) { li = j; break; } }
+    for (let j = i+1; j < n; j++) { if (tot[j] !== null) { ni = j; break; } }
+    if (li !== -1 && ni !== -1) {
+      const d = (tot[ni] - tot[li]) / (ni - li);
+      for (let k = li+1; k <= ni; k++) flows[k] = d;
+    }
+  }
+  return flows;
+}
+
+// ─── Export ───────────────────────────────────────────────────────────────────
+function exportToXLSX(config, data) {
+  const { facilityName, month, year, effluentCount, hasInfluent,
+          hasEffluentPH, hasInfluentPH, effluentLabels, influentLabel } = config;
+  const { eff1, eff2, inf, eff1Day1, infDay1, effPH, infPH } = data;
+  const numDays = daysInMonth(month, year);
+
+  const combined = effluentCount === 2
+    ? eff1.map((v,i) => v !== null && eff2[i] !== null ? v + eff2[i] : null) : eff1;
+  const efF = interpolateFlow(combined, eff1Day1);
+  const ifF = hasInfluent ? interpolateFlow(inf, infDay1) : null;
+
+  const headers = ["Day"];
+  if (effluentCount === 1) headers.push(effluentLabels[0]);
+  if (effluentCount === 2) { headers.push(effluentLabels[0]); headers.push(effluentLabels[1]); }
+  headers.push("Effluent Daily Flow");
+  if (hasInfluent) { headers.push(influentLabel); headers.push("Influent Daily Flow"); }
+  if (hasEffluentPH) headers.push("Effluent pH");
+  if (hasInfluentPH) headers.push("Influent pH");
+
+  const aoa = [headers];
+  let tEff = 0, tInf = 0;
+  for (let d = 0; d < numDays; d++) {
+    const row = [d + 1];
+    if (effluentCount === 1) row.push(eff1[d] != null ? eff1[d] : "");
+    if (effluentCount === 2) { row.push(eff1[d] != null ? eff1[d] : ""); row.push(eff2[d] != null ? eff2[d] : ""); }
+    const ef = fmt1(efF[d]);
+    row.push(ef !== null ? ef : "");
+    if (ef !== null) tEff += ef;
+    if (hasInfluent) {
+      row.push(inf[d] != null ? inf[d] : "");
+      const ifl = fmt1(ifF[d]);
+      row.push(ifl !== null ? ifl : "");
+      if (ifl !== null) tInf += ifl;
+    }
+    if (hasEffluentPH) row.push(effPH[d] != null ? effPH[d] : "");
+    if (hasInfluentPH) row.push(infPH[d] != null ? infPH[d] : "");
+    aoa.push(row);
+  }
+  const totRow = ["MONTHLY TOTAL"];
+  if (effluentCount === 1) totRow.push("");
+  if (effluentCount === 2) { totRow.push(""); totRow.push(""); }
+  totRow.push(fmt1(tEff));
+  if (hasInfluent) { totRow.push(""); totRow.push(fmt1(tInf)); }
+  if (hasEffluentPH) totRow.push("");
+  if (hasInfluentPH) totRow.push("");
+  aoa.push(totRow);
+
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws["!cols"] = [{ wch: 6 }, ...Array(headers.length - 1).fill({ wch: 20 })];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, month + " " + year);
+  XLSX.writeFile(wb, facilityName.replace(/\s+/g,"_") + "_DMR_" + month + "_" + year + ".xlsx");
+}
+
+// ─── Shared styles ────────────────────────────────────────────────────────────
+const TH = { background:"#0f2640", color:"white", padding:"11px 10px", fontSize:11,
+             fontWeight:700, textTransform:"uppercase", letterSpacing:0.5,
+             textAlign:"center", whiteSpace:"nowrap" };
+const TD = { padding:"3px 5px", borderBottom:"1px solid #e5e7eb" };
+
+// ─── Small components ─────────────────────────────────────────────────────────
+function Lbl({ children, mt }) {
+  return h("div", { style:{ fontSize:11, fontWeight:700, color:"#374151",
+    textTransform:"uppercase", letterSpacing:0.8, marginBottom:6, marginTop: mt ?? 18 }}, children);
+}
+
+function Tog({ active, onClick, children }) {
+  return h("button", { onClick, style:{
+    padding:"9px 18px", borderRadius:7, fontSize:13, fontWeight:600, cursor:"pointer",
+    border: active ? "2px solid #1a3a5c" : "2px solid #e5e7eb",
+    background: active ? "#1a3a5c" : "white",
+    color: active ? "white" : "#6b7280",
+    boxShadow: active ? "0 2px 6px rgba(26,58,92,0.25)" : "none"
+  }}, children);
+}
+
+function ChkBox({ checked, onChange, children }) {
+  return h("label", { style:{ display:"flex", alignItems:"center", gap:8, fontSize:14,
+    color:"#374151", cursor:"pointer", userSelect:"none" }},
+    h("div", { onClick: () => onChange(!checked), style:{
+      width:18, height:18, borderRadius:4,
+      border: checked ? "none" : "2px solid #d1d5db",
+      background: checked ? "#1a3a5c" : "white",
+      display:"flex", alignItems:"center", justifyContent:"center",
+      flexShrink:0, boxShadow: checked ? "0 1px 4px rgba(26,58,92,0.3)" : "none"
+    }},
+      checked && h("svg", { width:11, height:8, viewBox:"0 0 11 8", fill:"none" },
+        h("path", { d:"M1 4L4 7L10 1", stroke:"white", strokeWidth:2,
+          strokeLinecap:"round", strokeLinejoin:"round" })
+      )
+    ),
+    children
+  );
+}
+
+function StatBox({ label, value }) {
+  return h("div", { style:{ background:"rgba(255,255,255,0.08)", border:"1px solid rgba(255,255,255,0.12)",
+    borderRadius:8, padding:"5px 12px", textAlign:"center" }},
+    h("div", { style:{ color:"#7dd3fc", fontSize:10, fontWeight:600,
+      textTransform:"uppercase", letterSpacing:0.5 }}, label),
+    h("div", { style:{ color:"white", fontSize:14, fontWeight:700, fontFamily:"monospace" }}, value)
+  );
+}
+
+// ─── Number input helper ──────────────────────────────────────────────────────
+function NI({ val, onChange, step }) {
+  return h("input", {
+    type:"number", step: step || "0.001",
+    style:{ width:"100%", minWidth:80, padding:"6px 8px", border:"1.5px solid #e5e7eb",
+      borderRadius:5, fontSize:13, fontFamily:"monospace", textAlign:"right",
+      outline:"none", boxSizing:"border-box", color:"#111827", background:"white" },
+    value: val !== null && val !== undefined ? val : "",
+    onChange: e => onChange(e.target.value !== "" ? parseFloat(e.target.value) : null),
+    onFocus: e => e.target.style.borderColor = "#1a3a5c",
+    onBlur:  e => e.target.style.borderColor = "#e5e7eb"
+  });
+}
+
+// ─── Setup Screen ─────────────────────────────────────────────────────────────
+function SetupScreen({ onStart }) {
+  const [facilityName, setFacilityName] = useState("");
+  const [month, setMonth]       = useState(MONTHS[new Date().getMonth()]);
+  const [year,  setYear]        = useState(CY);
+  const [effluentCount, setEC]  = useState(1);
+  const [hasInfluent,   setHI]  = useState(false);
+  const [hasEffPH,      setEPH] = useState(true);
+  const [hasInfPH,      setIPH] = useState(false);
+  const [eff1Label, setE1L] = useState("Effluent Totalizer");
+  const [eff2Label, setE2L] = useState("Effluent Totalizer 2");
+  const [infLabel,  setIL]  = useState("Influent Totalizer");
+  const canStart = facilityName.trim().length > 0;
+
+  const IS = { width:"100%", padding:"10px 13px", border:"1.5px solid #d1d5db",
+    borderRadius:7, fontSize:14, fontFamily:"inherit", color:"#111827",
+    outline:"none", boxSizing:"border-box" };
+  const SS = { ...IS, background:"white",
+    backgroundImage:`url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%236b7280' strokeWidth='1.5' fill='none' strokeLinecap='round'/%3E%3C/svg%3E")`,
+    backgroundRepeat:"no-repeat", backgroundPosition:"right 12px center",
+    paddingRight:34, appearance:"none", WebkitAppearance:"none" };
+
+  return h("div", { style:{ minHeight:"100vh",
+    background:"linear-gradient(160deg,#071520 0%,#0f2640 45%,#071520 100%)",
+    display:"flex", alignItems:"center", justifyContent:"center", padding:20 }},
+
+    h("div", { style:{ background:"white", borderRadius:14, padding:"38px 42px",
+      width:"100%", maxWidth:540, boxShadow:"0 28px 70px rgba(0,0,0,0.4)" }},
+
+      // Logo
+      h("div", { style:{ display:"flex", alignItems:"center", gap:12, marginBottom:26 }},
+        h("svg", { width:38, height:38, viewBox:"0 0 38 38", fill:"none" },
+          h("circle", { cx:19, cy:19, r:19, fill:"#0f2640" }),
+          h("path", { d:"M19 5 C14.5 10 10 14.5 10 19 C10 24.8 14 29 19 29 C24 29 28 24.8 28 19 C28 14.5 23.5 10 19 5Z", fill:"#38bdf8", opacity:0.9 }),
+          h("path", { d:"M19 11 C16.5 14.5 15 17 15 19 C15 22.3 16.8 25 19 25 C21.2 25 23 22.3 23 19 C23 17 21.5 14.5 19 11Z", fill:"white", opacity:0.55 })
+        ),
+        h("div", null,
+          h("div", { style:{ fontSize:20, fontWeight:800, color:"#0f2640", letterSpacing:0.5 }}, "DMR Universal"),
+          h("div", { style:{ fontSize:11, color:"#38bdf8", fontWeight:600, letterSpacing:0.5 }}, "Discharge Monitoring Report")
+        )
+      ),
+
+      h("h1", { style:{ fontSize:22, fontWeight:700, color:"#0f2640", margin:"0 0 4px" }}, "Configure Your DMR"),
+      h("p",  { style:{ fontSize:13, color:"#6b7280", margin:"0 0 24px" }}, "Set up your report before entering data"),
+
+      h(Lbl, { mt:0 }, "Facility Name"),
+      h("input", { style:IS, placeholder:"e.g. Windsor WWTP", value:facilityName,
+        onChange: e => setFacilityName(e.target.value),
+        onKeyDown: e => { if (e.key==="Enter" && canStart) document.getElementById("createBtn").click(); }
+      }),
+
+      h("div", { style:{ display:"flex", gap:12 }},
+        h("div", { style:{ flex:1 }},
+          h(Lbl, null, "Month"),
+          h("select", { style:SS, value:month, onChange: e => setMonth(e.target.value) },
+            MONTHS.map(m => h("option", { key:m }, m))
+          )
+        ),
+        h("div", { style:{ flex:1 }},
+          h(Lbl, null, "Year"),
+          h("select", { style:SS, value:year, onChange: e => setYear(+e.target.value) },
+            YEARS.map(y => h("option", { key:y }, y))
+          )
+        )
+      ),
+
+      h(Lbl, null, "Effluent Totalizers"),
+      h("div", { style:{ display:"flex", gap:8, marginBottom:10 }},
+        h(Tog, { active: effluentCount===1, onClick: () => setEC(1) }, "1 Totalizer"),
+        h(Tog, { active: effluentCount===2, onClick: () => setEC(2) }, "2 Totalizers (Q1 + Q2)")
+      ),
+      effluentCount === 1 && h("input", { style:IS, placeholder:"Column label", value:eff1Label, onChange: e => setE1L(e.target.value) }),
+      effluentCount === 2 && h("div", { style:{ display:"flex", gap:10 }},
+        h("input", { style:{ ...IS, flex:1 }, placeholder:"Q1 label", value:eff1Label, onChange: e => setE1L(e.target.value) }),
+        h("input", { style:{ ...IS, flex:1 }, placeholder:"Q2 label", value:eff2Label, onChange: e => setE2L(e.target.value) })
+      ),
+
+      h(Lbl, null, "Influent Totalizer"),
+      h("div", { style:{ display:"flex", gap:8, marginBottom: hasInfluent ? 10 : 0 }},
+        h(Tog, { active: !hasInfluent, onClick: () => setHI(false) }, "No"),
+        h(Tog, { active:  hasInfluent, onClick: () => setHI(true)  }, "Yes")
+      ),
+      hasInfluent && h("input", { style:IS, placeholder:"Column label", value:infLabel, onChange: e => setIL(e.target.value) }),
+
+      h(Lbl, null, "pH Columns"),
+      h("div", { style:{ display:"flex", gap:20 }},
+        h(ChkBox, { checked:hasEffPH, onChange:setEPH }, "Effluent pH"),
+        h(ChkBox, { checked:hasInfPH, onChange:setIPH }, "Influent pH")
+      ),
+
+      // Preview pill
+      h("div", { style:{ marginTop:22, marginBottom:4, padding:"10px 14px",
+        background:"#f0f7ff", borderRadius:8, border:"1px solid #bfdbfe",
+        fontSize:12, color:"#1e40af" }},
+        h("strong", null, "Preview: "),
+        [
+          effluentCount===1 ? "1 effluent totalizer" : "2 effluent totalizers",
+          hasInfluent ? "influent totalizer" : null,
+          hasEffPH ? "effluent pH" : null,
+          hasInfPH ? "influent pH" : null
+        ].filter(Boolean).join(" · "),
+        " — ",
+        h("strong", null, daysInMonth(month, year) + " days")
+      ),
+
+      h("button", {
+        id:"createBtn", disabled:!canStart,
+        style:{ width:"100%", padding:"13px",
+          background: canStart ? "linear-gradient(135deg,#0f2640,#1d6fa4)" : "#e5e7eb",
+          color: canStart ? "white" : "#9ca3af",
+          border:"none", borderRadius:9, fontSize:15, fontWeight:700,
+          cursor: canStart ? "pointer" : "not-allowed", marginTop:14,
+          boxShadow: canStart ? "0 4px 14px rgba(15,38,64,0.3)" : "none" },
+        onClick: () => onStart({
+          facilityName: facilityName.trim(), month, year,
+          effluentCount, hasInfluent,
+          hasEffluentPH: hasEffPH, hasInfluentPH: hasInfPH,
+          effluentLabels: [eff1Label, eff2Label],
+          influentLabel: infLabel
+        })
+      }, "Create DMR →")
+    )
+  );
+}
+
+// ─── DMR Table ────────────────────────────────────────────────────────────────
+function DMRTable({ config, onReset }) {
+  const { facilityName, month, year, effluentCount, hasInfluent,
+          hasEffluentPH, hasInfluentPH, effluentLabels, influentLabel } = config;
+  const numDays = daysInMonth(month, year);
+  const init = () => new Array(numDays).fill(null);
+
+  const [eff1, setEff1]     = useState(init);
+  const [eff2, setEff2]     = useState(init);
+  const [inf,  setInf]      = useState(init);
+  const [eff1Day1, setED1]  = useState(null);
+  const [infDay1,  setID1]  = useState(null);
+  const [effPH, setEffPH]   = useState(init);
+  const [infPH, setInfPH]   = useState(init);
+  const [exportFlash, setEF] = useState(false);
+
+  const [rapidOpen,  setRO] = useState(false);
+  const [rapidQueue, setRQ] = useState([]);
+  const [rapidStep,  setRS] = useState(0);
+  const [rapidValue, setRV] = useState("");
+  const [justSaved,  setJS] = useState(false);
+  const rapidRef = useRef(null);
+
+  const combined = effluentCount === 2
+    ? eff1.map((v,i) => v !== null && eff2[i] !== null ? v + eff2[i] : null) : eff1;
+  const efF = interpolateFlow(combined, eff1Day1);
+  const ifF = hasInfluent ? interpolateFlow(inf, infDay1) : null;
+
+  const totalEff = efF.filter(v=>v!==null).reduce((a,b)=>a+b,0);
+  const totalInf = ifF ? ifF.filter(v=>v!==null).reduce((a,b)=>a+b,0) : 0;
+
+  const totalInputCells = numDays * (effluentCount + (hasInfluent?1:0) + (hasEffluentPH?1:0) + (hasInfluentPH?1:0));
+  const filledCells = [
+    ...eff1, ...(effluentCount===2 ? eff2 : []),
+    ...(hasInfluent ? inf : []),
+    ...(hasEffluentPH ? effPH : []),
+    ...(hasInfluentPH ? infPH : [])
+  ].filter(v => v !== null).length;
+  const pct = totalInputCells > 0 ? Math.round((filledCells / totalInputCells) * 100) : 0;
+
+  function buildQueue() {
+    const q = [];
+    for (let d = 1; d <= numDays; d++) {
+      q.push({ type:"eff1", day:d, label: effluentLabels[0] });
+      if (effluentCount===2) q.push({ type:"eff2", day:d, label: effluentLabels[1] });
+      if (hasInfluent)       q.push({ type:"inf",  day:d, label: influentLabel });
+      if (d===1) {
+        q.push({ type:"eff1day1", day:1, label:"Day 1 Effluent Flow" });
+        if (hasInfluent) q.push({ type:"infday1", day:1, label:"Day 1 Influent Flow" });
+      }
+      if (hasEffluentPH) q.push({ type:"effph", day:d, label:"Effluent pH" });
+      if (hasInfluentPH) q.push({ type:"infph", day:d, label:"Influent pH" });
+    }
+    return q;
+  }
+
+  function startRapid() {
+    setRQ(buildQueue()); setRS(0); setRV(""); setRO(true);
+  }
+
+  useEffect(() => {
+    if (rapidOpen) setTimeout(() => rapidRef.current && rapidRef.current.focus(), 60);
+  }, [rapidOpen, rapidStep]);
+
+  function commitRapid() {
+    const val = rapidValue !== "" ? parseFloat(rapidValue) : null;
+    const item = rapidQueue[rapidStep];
+    if (!item) return;
+    const upd = (arr, setFn) => { const n=[...arr]; n[item.day-1]=val; setFn(n); };
+    if      (item.type==="eff1")    upd(eff1, setEff1);
+    else if (item.type==="eff2")    upd(eff2, setEff2);
+    else if (item.type==="inf")     upd(inf,  setInf);
+    else if (item.type==="eff1day1") setED1(val);
+    else if (item.type==="infday1")  setID1(val);
+    else if (item.type==="effph")   upd(effPH, setEffPH);
+    else if (item.type==="infph")   upd(infPH, setInfPH);
+    setJS(true); setTimeout(() => setJS(false), 400);
+    const next = rapidStep + 1;
+    if (next >= rapidQueue.length) { setRO(false); return; }
+    setRS(next); setRV("");
+  }
+
+  function handleExport() {
+    exportToXLSX(config, { eff1, eff2, inf, eff1Day1, infDay1, effPH, infPH });
+    setEF(true); setTimeout(() => setEF(false), 1800);
+  }
+
+  const setArr = (setFn, arr, i, v) => { const n=[...arr]; n[i]=v; setFn(n); };
+  const currentItem = rapidOpen ? rapidQueue[rapidStep] : null;
+
+  return h("div", { style:{ minHeight:"100vh", background:"#eef2f7" }},
+
+    // ── Header
+    h("div", { style:{ background:"linear-gradient(135deg,#071520,#0f2640)", padding:"14px 22px",
+      display:"flex", alignItems:"center", justifyContent:"space-between", gap:12, flexWrap:"wrap" }},
+      h("div", { style:{ display:"flex", alignItems:"center", gap:14 }},
+        h("button", { onClick:onReset, style:{ background:"rgba(255,255,255,0.1)",
+          border:"1px solid rgba(255,255,255,0.18)", color:"white", padding:"7px 13px",
+          borderRadius:7, cursor:"pointer", fontSize:12, fontWeight:500 }}, "← New DMR"),
+        h("div", null,
+          h("div", { style:{ color:"white", fontSize:18, fontWeight:700, lineHeight:1.2 }}, facilityName),
+          h("div", { style:{ color:"#7dd3fc", fontSize:11 }}, "Discharge Monitoring Report — " + month + " " + year)
+        )
+      ),
+      h("div", { style:{ display:"flex", alignItems:"center", gap:10, flexWrap:"wrap" }},
+        h(StatBox, { label:"Progress", value: pct + "%" }),
+        h(StatBox, { label:"Eff. Total", value: totalEff.toFixed(1) }),
+        hasInfluent && h(StatBox, { label:"Inf. Total", value: totalInf.toFixed(1) }),
+        h("button", { onClick:startRapid, style:{ background:"#1d4ed8", border:"none",
+          color:"white", padding:"9px 16px", borderRadius:7, cursor:"pointer",
+          fontSize:13, fontWeight:600 }}, "⌨ Rapid Entry"),
+        h("button", { onClick:handleExport, style:{ background: exportFlash ? "#15803d" : "#16a34a",
+          border:"none", color:"white", padding:"9px 16px", borderRadius:7,
+          cursor:"pointer", fontSize:13, fontWeight:600, transition:"background 0.3s" }},
+          exportFlash ? "✓ Downloaded!" : "↓ Export Excel"
+        )
+      )
+    ),
+
+    // ── Progress strip
+    h("div", { style:{ height:3, background:"#cbd5e1" }},
+      h("div", { style:{ height:"100%", width: pct + "%",
+        background:"linear-gradient(90deg,#0f2640,#38bdf8)", transition:"width 0.4s ease" }})
+    ),
+
+    // ── Table
+    h("div", { style:{ overflowX:"auto", padding:"20px 22px" }},
+      h("table", { style:{ width:"100%", borderCollapse:"collapse", background:"white",
+        borderRadius:10, overflow:"hidden", boxShadow:"0 2px 16px rgba(0,0,0,0.09)" }},
+        h("thead", null,
+          h("tr", null,
+            h("th", { style:{ ...TH, width:44, background:"#0a1e33" }}, "Day"),
+            h("th", { style:TH }, effluentLabels[0]),
+            effluentCount===2 && h("th", { style:TH }, effluentLabels[1]),
+            h("th", { style:{ ...TH, background:"#163d6a" }}, "Eff. Daily Flow"),
+            hasInfluent && h("th", { style:{ ...TH, background:"#1a4a7a" }}, influentLabel),
+            hasInfluent && h("th", { style:{ ...TH, background:"#163d6a" }}, "Inf. Daily Flow"),
+            hasEffluentPH && h("th", { style:{ ...TH, background:"#1d3461" }}, "Effluent pH"),
+            hasInfluentPH && h("th", { style:{ ...TH, background:"#1d3461" }}, "Influent pH")
+          )
+        ),
+        h("tbody", null,
+          ...Array.from({ length: numDays }, (_, i) => {
+            const d = i + 1;
+            const ef  = efF[i];
+            const ifl = ifF ? ifF[i] : null;
+            const now = new Date();
+            const isToday = d === now.getDate() && MONTHS.indexOf(month) === now.getMonth() && year === now.getFullYear();
+            const rowBg = isToday ? "#fffbeb" : i%2===1 ? "#f8fafc" : "white";
+            return h("tr", { key:d, style:{ background:rowBg }},
+              h("td", { style:{ ...TD, fontWeight:700, fontSize:12, textAlign:"center",
+                color: isToday ? "#b45309" : "#374151",
+                background: isToday ? "#fef3c7" : "#f8fafc",
+                borderRight:"1px solid #e5e7eb" }},
+                d,
+                isToday && h("span", { style:{ display:"block", fontSize:9, color:"#b45309", fontWeight:800 }}, "TODAY")
+              ),
+              h("td", { style:TD }, h(NI, { val:eff1[i], onChange: v => setArr(setEff1,eff1,i,v) })),
+              effluentCount===2 && h("td", { style:TD }, h(NI, { val:eff2[i], onChange: v => setArr(setEff2,eff2,i,v) })),
+              h("td", { style:{ ...TD, background:"#f0f7ff", padding:"3px 10px" }},
+                d===1
+                  ? h(NI, { val:eff1Day1, onChange:setED1 })
+                  : h("span", { style:{ fontFamily:"monospace", fontSize:13, fontWeight:600,
+                      color: ef!==null ? "#1a3a5c" : "#d1d5db" }},
+                      ef!==null ? disp(ef) : "—"
+                    )
+              ),
+              hasInfluent && h("td", { style:TD }, h(NI, { val:inf[i], onChange: v => setArr(setInf,inf,i,v) })),
+              hasInfluent && h("td", { style:{ ...TD, background:"#f0f7ff", padding:"3px 10px" }},
+                d===1
+                  ? h(NI, { val:infDay1, onChange:setID1 })
+                  : h("span", { style:{ fontFamily:"monospace", fontSize:13, fontWeight:600,
+                      color: ifl!==null ? "#1a3a5c" : "#d1d5db" }},
+                      ifl!==null ? disp(ifl) : "—"
+                    )
+              ),
+              hasEffluentPH && h("td", { style:TD }, h(NI, { val:effPH[i], step:"0.1", onChange: v => setArr(setEffPH,effPH,i,v) })),
+              hasInfluentPH && h("td", { style:TD }, h(NI, { val:infPH[i], step:"0.1", onChange: v => setArr(setInfPH,infPH,i,v) }))
+            );
+          }),
+          // Totals row
+          h("tr", { style:{ background:"#dbeafe", borderTop:"2px solid #93c5fd" }},
+            h("td", { style:{ ...TD, fontWeight:800, fontSize:11, textAlign:"center", color:"#1e40af", background:"#bfdbfe" }}, "TOT"),
+            h("td", { style:TD }),
+            effluentCount===2 && h("td", { style:TD }),
+            h("td", { style:{ ...TD, background:"#dbeafe", fontFamily:"monospace", fontWeight:800, fontSize:14, color:"#1e40af", padding:"6px 10px" }}, totalEff.toFixed(1)),
+            hasInfluent && h("td", { style:TD }),
+            hasInfluent && h("td", { style:{ ...TD, background:"#dbeafe", fontFamily:"monospace", fontWeight:800, fontSize:14, color:"#1e40af", padding:"6px 10px" }}, totalInf.toFixed(1)),
+            hasEffluentPH && h("td", { style:TD }),
+            hasInfluentPH && h("td", { style:TD })
+          )
+        )
+      )
+    ),
+
+    // ── Rapid Entry Modal
+    rapidOpen && currentItem && h("div", {
+      style:{ position:"fixed", inset:0, background:"rgba(5,15,30,0.75)",
+        display:"flex", alignItems:"center", justifyContent:"center", zIndex:1000 }},
+      h("div", { style:{ background:"white", borderRadius:14, padding:"28px 32px",
+        width:"100%", maxWidth:390, boxShadow:"0 32px 80px rgba(0,0,0,0.45)" }},
+
+        h("div", { style:{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }},
+          h("span", { style:{ fontSize:11, color:"#9ca3af", fontWeight:600 }}, "Step " + (rapidStep+1) + " of " + rapidQueue.length),
+          h("button", { onClick:() => setRO(false), style:{ background:"none", border:"none", fontSize:20, cursor:"pointer", color:"#9ca3af", lineHeight:1, padding:0 }}, "✕")
+        ),
+        h("div", { style:{ height:5, background:"#f1f5f9", borderRadius:3, marginBottom:22, overflow:"hidden" }},
+          h("div", { style:{ height:"100%", width: ((rapidStep+1)/rapidQueue.length*100) + "%",
+            background:"linear-gradient(90deg,#0f2640,#38bdf8)", borderRadius:3, transition:"width 0.2s" }})
+        ),
+        h("div", { style:{ display:"flex", alignItems:"baseline", gap:10, marginBottom:6 }},
+          h("span", { style:{ background:"#0f2640", color:"white", borderRadius:20,
+            padding:"3px 10px", fontSize:12, fontWeight:700 }}, "Day " + currentItem.day),
+          justSaved && h("span", { style:{ fontSize:11, color:"#16a34a", fontWeight:600 }}, "✓ Saved")
+        ),
+        h("div", { style:{ fontSize:20, fontWeight:700, color:"#0f2640", marginBottom:16 }}, currentItem.label),
+
+        h("input", {
+          ref: rapidRef, type:"number", step:"0.001",
+          style:{ width:"100%", padding:"14px 16px", border:"2px solid #0f2640",
+            borderRadius:9, fontSize:20, fontFamily:"monospace", outline:"none",
+            textAlign:"right", boxSizing:"border-box", marginBottom:8 },
+          placeholder:"—", value:rapidValue,
+          onChange: e => setRV(e.target.value),
+          onKeyDown: e => { if(e.key==="Enter") commitRapid(); if(e.key==="Escape") setRO(false); }
+        }),
+
+        h("div", { style:{ fontSize:11, color:"#9ca3af", textAlign:"center", marginBottom:18 }},
+          h("kbd", null, "Enter"), " to save & advance · ", h("kbd", null, "Esc"), " to close · leave blank to skip"
+        ),
+
+        rapidStep + 1 < rapidQueue.length && h("div", {
+          style:{ fontSize:11, color:"#9ca3af", marginBottom:14, padding:"6px 10px",
+            background:"#f9fafb", borderRadius:6 }},
+          "Next: ",
+          h("strong", { style:{ color:"#374151" }},
+            "Day " + rapidQueue[rapidStep+1].day + " — " + rapidQueue[rapidStep+1].label)
+        ),
+
+        h("div", { style:{ display:"flex", gap:10, justifyContent:"flex-end" }},
+          h("button", { onClick:() => { setRV(""); commitRapid(); },
+            style:{ padding:"10px 18px", background:"#f3f4f6", border:"none",
+              borderRadius:7, fontSize:13, color:"#6b7280", cursor:"pointer" }}, "Skip"),
+          h("button", { onClick:commitRapid,
+            style:{ padding:"10px 24px", background:"#0f2640", border:"none",
+              borderRadius:7, fontSize:13, color:"white", cursor:"pointer", fontWeight:700 }}, "Save & Next →")
+        )
+      )
+    )
+  );
+}
+
+// ─── Root ─────────────────────────────────────────────────────────────────────
+function App() {
+  const [config, setConfig] = useState(null);
+  if (!config) return h(SetupScreen, { onStart: setConfig });
+  return h(DMRTable, { config, onReset: () => setConfig(null) });
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(h(App, null));
+</script>
+</body>
+</html>
