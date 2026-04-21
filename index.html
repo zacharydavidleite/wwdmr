@@ -19,12 +19,21 @@
       border-radius: 3px; padding: 1px 5px;
       font-family: monospace; font-size: 10px;
     }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(6px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes pulse {
+      0%,100% { opacity: 1; }
+      50%      { opacity: 0.4; }
+    }
+    .autosave-pulse { animation: pulse 1.2s ease-in-out; }
   </style>
 </head>
 <body>
 <div id="root"></div>
 <script>
-const { useState, useRef, useEffect, createElement: h, Fragment } = React;
+const { useState, useRef, useEffect, useCallback, createElement: h, Fragment } = React;
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const MONTHS = ["January","February","March","April","May","June",
@@ -33,6 +42,9 @@ const CY = new Date().getFullYear();
 const YEARS = Array.from({ length: 6 }, (_, i) => CY - 2 + i);
 const fmt1 = v => v !== null ? parseFloat(v.toFixed(1)) : null;
 const disp = v => v !== null ? v.toFixed(1) : null;
+const STORAGE_KEY   = "dmr_universal_sessions";
+const DRAFT_KEY     = "dmr_universal_draft";
+const MAX_SESSIONS  = 12;
 
 function daysInMonth(month, year) {
   return new Date(year, MONTHS.indexOf(month) + 1, 0).getDate();
@@ -54,6 +66,64 @@ function interpolateFlow(tot, day1) {
     }
   }
   return flows;
+}
+
+// ─── localStorage helpers ─────────────────────────────────────────────────────
+function loadSessions() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+}
+
+function saveSessions(sessions) {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions)); } catch {}
+}
+
+function loadDraft() {
+  try {
+    const raw = localStorage.getItem(DRAFT_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+
+function saveDraft(config, data) {
+  try {
+    localStorage.setItem(DRAFT_KEY, JSON.stringify({
+      config, data, savedAt: Date.now()
+    }));
+  } catch {}
+}
+
+function clearDraft() {
+  try { localStorage.removeItem(DRAFT_KEY); } catch {}
+}
+
+function upsertSession(config, data) {
+  const sessions = loadSessions();
+  const key = config.facilityName + "|" + config.month + "|" + config.year;
+  const existing = sessions.findIndex(s => s.key === key);
+  const entry = { key, config, data, savedAt: Date.now() };
+  if (existing !== -1) sessions[existing] = entry;
+  else sessions.unshift(entry);
+  if (sessions.length > MAX_SESSIONS) sessions.splice(MAX_SESSIONS);
+  saveSessions(sessions);
+}
+
+function deleteSession(key) {
+  const sessions = loadSessions().filter(s => s.key !== key);
+  saveSessions(sessions);
+}
+
+function timeAgo(ts) {
+  const diff = Date.now() - ts;
+  const m = Math.floor(diff / 60000);
+  if (m < 1)  return "just now";
+  if (m < 60) return m + "m ago";
+  const h = Math.floor(m / 60);
+  if (h < 24) return h + "h ago";
+  const d = Math.floor(h / 24);
+  return d === 1 ? "yesterday" : d + "d ago";
 }
 
 // ─── Export ───────────────────────────────────────────────────────────────────
@@ -161,7 +231,6 @@ function StatBox({ label, value }) {
   );
 }
 
-// ─── Number input helper ──────────────────────────────────────────────────────
 function NI({ val, onChange, step }) {
   return h("input", {
     type:"number", step: step || "0.001",
@@ -173,6 +242,89 @@ function NI({ val, onChange, step }) {
     onFocus: e => e.target.style.borderColor = "#1a3a5c",
     onBlur:  e => e.target.style.borderColor = "#e5e7eb"
   });
+}
+
+// ─── Recent Sessions Panel ────────────────────────────────────────────────────
+function RecentSessions({ onLoad, onDismiss }) {
+  const [sessions, setSessions] = useState(loadSessions);
+  const [confirmDelete, setConfirmDelete] = useState(null);
+
+  function handleDelete(key) {
+    deleteSession(key);
+    setSessions(loadSessions());
+    setConfirmDelete(null);
+  }
+
+  if (sessions.length === 0) return null;
+
+  return h("div", { style:{ marginTop:26, borderTop:"1px solid #e5e7eb", paddingTop:20 }},
+    h("div", { style:{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12 }},
+      h("div", { style:{ fontSize:11, fontWeight:700, color:"#6b7280", textTransform:"uppercase", letterSpacing:0.8 }},
+        "Recent DMRs"
+      ),
+      h("span", { style:{ fontSize:11, color:"#9ca3af" }}, sessions.length + " saved")
+    ),
+    h("div", { style:{ display:"flex", flexDirection:"column", gap:7 }},
+      sessions.map(s => {
+        const pct = calcProgress(s.config, s.data);
+        return h("div", { key:s.key,
+          style:{ background:"#f8fafc", border:"1px solid #e5e7eb", borderRadius:9,
+            padding:"10px 13px", display:"flex", alignItems:"center", gap:10,
+            animation:"fadeIn 0.2s ease" }},
+          // Color strip
+          h("div", { style:{ width:4, height:44, borderRadius:2, flexShrink:0,
+            background: pct === 100 ? "#16a34a" : pct > 50 ? "#2563eb" : "#e5e7eb" }}),
+          // Info
+          h("div", { style:{ flex:1, minWidth:0 }},
+            h("div", { style:{ fontSize:14, fontWeight:700, color:"#111827",
+              whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }},
+              s.config.facilityName
+            ),
+            h("div", { style:{ fontSize:12, color:"#6b7280", marginTop:2 }},
+              s.config.month + " " + s.config.year + " · " + pct + "% complete · saved " + timeAgo(s.savedAt)
+            )
+          ),
+          // Progress bar
+          h("div", { style:{ width:54, flexShrink:0 }},
+            h("div", { style:{ height:5, background:"#e5e7eb", borderRadius:3, overflow:"hidden" }},
+              h("div", { style:{ height:"100%", width:pct+"%",
+                background: pct===100 ? "#16a34a" : "#2563eb", borderRadius:3 }})
+            ),
+            h("div", { style:{ fontSize:10, color:"#9ca3af", textAlign:"center", marginTop:3 }}, pct+"%")
+          ),
+          // Delete confirm
+          confirmDelete === s.key
+            ? h("div", { style:{ display:"flex", gap:5, flexShrink:0 }},
+                h("button", { onClick:() => handleDelete(s.key), style:{ padding:"5px 10px", background:"#dc2626", color:"white", border:"none", borderRadius:5, fontSize:12, cursor:"pointer", fontWeight:600 }}, "Delete"),
+                h("button", { onClick:()=>setConfirmDelete(null), style:{ padding:"5px 10px", background:"#f3f4f6", color:"#374151", border:"none", borderRadius:5, fontSize:12, cursor:"pointer" }}, "Cancel")
+              )
+            : h("div", { style:{ display:"flex", gap:6, flexShrink:0 }},
+                h("button", { onClick:()=>onLoad(s), style:{ padding:"7px 14px", background:"#0f2640",
+                  color:"white", border:"none", borderRadius:6, fontSize:12,
+                  cursor:"pointer", fontWeight:600 }}, "Load"),
+                h("button", { onClick:()=>setConfirmDelete(s.key), style:{ padding:"7px 10px",
+                  background:"transparent", color:"#9ca3af", border:"1px solid #e5e7eb",
+                  borderRadius:6, fontSize:12, cursor:"pointer" }}, "✕")
+              )
+        );
+      })
+    )
+  );
+}
+
+// ─── progress helper ──────────────────────────────────────────────────────────
+function calcProgress(config, data) {
+  const numDays = daysInMonth(config.month, config.year);
+  const { effluentCount, hasInfluent, hasEffluentPH, hasInfluentPH } = config;
+  const { eff1, eff2, inf, effPH, infPH } = data;
+  const total = numDays * (effluentCount + (hasInfluent?1:0) + (hasEffluentPH?1:0) + (hasInfluentPH?1:0));
+  const filled = [
+    ...eff1, ...(effluentCount===2 ? eff2 : []),
+    ...(hasInfluent ? inf : []),
+    ...(hasEffluentPH ? effPH : []),
+    ...(hasInfluentPH ? infPH : [])
+  ].filter(v => v !== null).length;
+  return total > 0 ? Math.round((filled / total) * 100) : 0;
 }
 
 // ─── Setup Screen ─────────────────────────────────────────────────────────────
@@ -187,6 +339,7 @@ function SetupScreen({ onStart }) {
   const [eff1Label, setE1L] = useState("Effluent Totalizer");
   const [eff2Label, setE2L] = useState("Effluent Totalizer 2");
   const [infLabel,  setIL]  = useState("Influent Totalizer");
+  const [draftBanner, setDraftBanner] = useState(() => loadDraft());
   const canStart = facilityName.trim().length > 0;
 
   const IS = { width:"100%", padding:"10px 13px", border:"1.5px solid #d1d5db",
@@ -197,12 +350,22 @@ function SetupScreen({ onStart }) {
     backgroundRepeat:"no-repeat", backgroundPosition:"right 12px center",
     paddingRight:34, appearance:"none", WebkitAppearance:"none" };
 
+  function handleLoadDraft() {
+    const d = loadDraft();
+    if (d) onStart(d.config, d.data);
+  }
+
+  function handleLoadSession(session) {
+    onStart(session.config, session.data);
+  }
+
   return h("div", { style:{ minHeight:"100vh",
     background:"linear-gradient(160deg,#071520 0%,#0f2640 45%,#071520 100%)",
     display:"flex", alignItems:"center", justifyContent:"center", padding:20 }},
 
     h("div", { style:{ background:"white", borderRadius:14, padding:"38px 42px",
-      width:"100%", maxWidth:540, boxShadow:"0 28px 70px rgba(0,0,0,0.4)" }},
+      width:"100%", maxWidth:560, boxShadow:"0 28px 70px rgba(0,0,0,0.4)",
+      maxHeight:"92vh", overflowY:"auto" }},
 
       // Logo
       h("div", { style:{ display:"flex", alignItems:"center", gap:12, marginBottom:26 }},
@@ -215,6 +378,30 @@ function SetupScreen({ onStart }) {
           h("div", { style:{ fontSize:20, fontWeight:800, color:"#0f2640", letterSpacing:0.5 }}, "DMR Universal"),
           h("div", { style:{ fontSize:11, color:"#38bdf8", fontWeight:600, letterSpacing:0.5 }}, "Discharge Monitoring Report")
         )
+      ),
+
+      // Draft recovery banner
+      draftBanner && h("div", { style:{ background:"#fffbeb", border:"1px solid #fcd34d",
+        borderRadius:9, padding:"12px 14px", marginBottom:20, display:"flex",
+        alignItems:"center", gap:12 }},
+        h("div", { style:{ fontSize:18 }}, "↩"),
+        h("div", { style:{ flex:1 }},
+          h("div", { style:{ fontSize:13, fontWeight:700, color:"#92400e" }},
+            "Unsaved session found"
+          ),
+          h("div", { style:{ fontSize:12, color:"#b45309", marginTop:2 }},
+            draftBanner.config.facilityName + " · " +
+            draftBanner.config.month + " " + draftBanner.config.year +
+            " · " + timeAgo(draftBanner.savedAt)
+          )
+        ),
+        h("button", { onClick:handleLoadDraft, style:{
+          padding:"8px 14px", background:"#b45309", color:"white",
+          border:"none", borderRadius:6, fontSize:13, fontWeight:700,
+          cursor:"pointer" }}, "Resume"),
+        h("button", { onClick:() => { clearDraft(); setDraftBanner(null); }, style:{
+          padding:"8px 10px", background:"transparent", color:"#9ca3af",
+          border:"none", fontSize:16, cursor:"pointer", lineHeight:1 }}, "✕")
       ),
 
       h("h1", { style:{ fontSize:22, fontWeight:700, color:"#0f2640", margin:"0 0 4px" }}, "Configure Your DMR"),
@@ -265,7 +452,6 @@ function SetupScreen({ onStart }) {
         h(ChkBox, { checked:hasInfPH, onChange:setIPH }, "Influent pH")
       ),
 
-      // Preview pill
       h("div", { style:{ marginTop:22, marginBottom:4, padding:"10px 14px",
         background:"#f0f7ff", borderRadius:8, border:"1px solid #bfdbfe",
         fontSize:12, color:"#1e40af" }},
@@ -295,26 +481,56 @@ function SetupScreen({ onStart }) {
           effluentLabels: [eff1Label, eff2Label],
           influentLabel: infLabel
         })
-      }, "Create DMR →")
+      }, "Create DMR →"),
+
+      // Recent sessions
+      h(RecentSessions, { onLoad: handleLoadSession })
     )
   );
 }
 
+// ─── Autosave indicator ───────────────────────────────────────────────────────
+function AutosaveIndicator({ status }) {
+  // status: "saving" | "saved" | "idle"
+  if (status === "idle") return null;
+  return h("div", {
+    style:{
+      display:"flex", alignItems:"center", gap:5,
+      fontSize:11, color: status==="saved" ? "#86efac" : "#7dd3fc",
+      transition:"opacity 0.3s"
+    }
+  },
+    status === "saving"
+      ? h("span", { style:{ display:"inline-block", width:8, height:8, borderRadius:"50%",
+          background:"#7dd3fc", animation:"pulse 1s infinite" }})
+      : h("svg", { width:11, height:11, viewBox:"0 0 11 8", fill:"none" },
+          h("path", { d:"M1 4L4 7L10 1", stroke:"#86efac", strokeWidth:2,
+            strokeLinecap:"round", strokeLinejoin:"round" })
+        ),
+    status === "saving" ? "Saving…" : "Saved"
+  );
+}
+
 // ─── DMR Table ────────────────────────────────────────────────────────────────
-function DMRTable({ config, onReset }) {
+function DMRTable({ config, initialData, onReset }) {
   const { facilityName, month, year, effluentCount, hasInfluent,
           hasEffluentPH, hasInfluentPH, effluentLabels, influentLabel } = config;
   const numDays = daysInMonth(month, year);
   const init = () => new Array(numDays).fill(null);
 
-  const [eff1, setEff1]     = useState(init);
-  const [eff2, setEff2]     = useState(init);
-  const [inf,  setInf]      = useState(init);
-  const [eff1Day1, setED1]  = useState(null);
-  const [infDay1,  setID1]  = useState(null);
-  const [effPH, setEffPH]   = useState(init);
-  const [infPH, setInfPH]   = useState(init);
+  // If loaded from storage, populate; otherwise blank
+  const seed = initialData || {};
+  const [eff1, setEff1]     = useState(() => seed.eff1    || init());
+  const [eff2, setEff2]     = useState(() => seed.eff2    || init());
+  const [inf,  setInf]      = useState(() => seed.inf     || init());
+  const [eff1Day1, setED1]  = useState(() => seed.eff1Day1 ?? null);
+  const [infDay1,  setID1]  = useState(() => seed.infDay1  ?? null);
+  const [effPH, setEffPH]   = useState(() => seed.effPH   || init());
+  const [infPH, setInfPH]   = useState(() => seed.infPH   || init());
   const [exportFlash, setEF] = useState(false);
+  const [saveStatus, setSaveStatus] = useState("idle");
+  const saveTimer = useRef(null);
+  const sessionTimer = useRef(null);
 
   const [rapidOpen,  setRO] = useState(false);
   const [rapidQueue, setRQ] = useState([]);
@@ -340,6 +556,31 @@ function DMRTable({ config, onReset }) {
   ].filter(v => v !== null).length;
   const pct = totalInputCells > 0 ? Math.round((filledCells / totalInputCells) * 100) : 0;
 
+  // ── Autosave on any data change ────────────────────────────────────────────
+  const currentData = { eff1, eff2, inf, eff1Day1, infDay1, effPH, infPH };
+
+  useEffect(() => {
+    // Debounced draft save (immediate local)
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    setSaveStatus("saving");
+    saveTimer.current = setTimeout(() => {
+      saveDraft(config, currentData);
+      setSaveStatus("saved");
+      setTimeout(() => setSaveStatus("idle"), 2200);
+    }, 800);
+
+    // Debounced session upsert (1.5s)
+    if (sessionTimer.current) clearTimeout(sessionTimer.current);
+    sessionTimer.current = setTimeout(() => {
+      upsertSession(config, currentData);
+    }, 1500);
+
+    return () => {
+      clearTimeout(saveTimer.current);
+      clearTimeout(sessionTimer.current);
+    };
+  }, [eff1, eff2, inf, eff1Day1, infDay1, effPH, infPH]);
+
   function buildQueue() {
     const q = [];
     for (let d = 1; d <= numDays; d++) {
@@ -356,9 +597,7 @@ function DMRTable({ config, onReset }) {
     return q;
   }
 
-  function startRapid() {
-    setRQ(buildQueue()); setRS(0); setRV(""); setRO(true);
-  }
+  function startRapid() { setRQ(buildQueue()); setRS(0); setRV(""); setRO(true); }
 
   useEffect(() => {
     if (rapidOpen) setTimeout(() => rapidRef.current && rapidRef.current.focus(), 60);
@@ -369,13 +608,13 @@ function DMRTable({ config, onReset }) {
     const item = rapidQueue[rapidStep];
     if (!item) return;
     const upd = (arr, setFn) => { const n=[...arr]; n[item.day-1]=val; setFn(n); };
-    if      (item.type==="eff1")    upd(eff1, setEff1);
-    else if (item.type==="eff2")    upd(eff2, setEff2);
-    else if (item.type==="inf")     upd(inf,  setInf);
+    if      (item.type==="eff1")     upd(eff1, setEff1);
+    else if (item.type==="eff2")     upd(eff2, setEff2);
+    else if (item.type==="inf")      upd(inf,  setInf);
     else if (item.type==="eff1day1") setED1(val);
     else if (item.type==="infday1")  setID1(val);
-    else if (item.type==="effph")   upd(effPH, setEffPH);
-    else if (item.type==="infph")   upd(infPH, setInfPH);
+    else if (item.type==="effph")    upd(effPH, setEffPH);
+    else if (item.type==="infph")    upd(infPH, setInfPH);
     setJS(true); setTimeout(() => setJS(false), 400);
     const next = rapidStep + 1;
     if (next >= rapidQueue.length) { setRO(false); return; }
@@ -383,8 +622,13 @@ function DMRTable({ config, onReset }) {
   }
 
   function handleExport() {
-    exportToXLSX(config, { eff1, eff2, inf, eff1Day1, infDay1, effPH, infPH });
+    exportToXLSX(config, currentData);
     setEF(true); setTimeout(() => setEF(false), 1800);
+  }
+
+  function handleReset() {
+    clearDraft();
+    onReset();
   }
 
   const setArr = (setFn, arr, i, v) => { const n=[...arr]; n[i]=v; setFn(n); };
@@ -396,12 +640,15 @@ function DMRTable({ config, onReset }) {
     h("div", { style:{ background:"linear-gradient(135deg,#071520,#0f2640)", padding:"14px 22px",
       display:"flex", alignItems:"center", justifyContent:"space-between", gap:12, flexWrap:"wrap" }},
       h("div", { style:{ display:"flex", alignItems:"center", gap:14 }},
-        h("button", { onClick:onReset, style:{ background:"rgba(255,255,255,0.1)",
+        h("button", { onClick:handleReset, style:{ background:"rgba(255,255,255,0.1)",
           border:"1px solid rgba(255,255,255,0.18)", color:"white", padding:"7px 13px",
           borderRadius:7, cursor:"pointer", fontSize:12, fontWeight:500 }}, "← New DMR"),
         h("div", null,
           h("div", { style:{ color:"white", fontSize:18, fontWeight:700, lineHeight:1.2 }}, facilityName),
-          h("div", { style:{ color:"#7dd3fc", fontSize:11 }}, "Discharge Monitoring Report — " + month + " " + year)
+          h("div", { style:{ color:"#7dd3fc", fontSize:11, display:"flex", alignItems:"center", gap:10 }},
+            "Discharge Monitoring Report — " + month + " " + year,
+            h(AutosaveIndicator, { status: saveStatus })
+          )
         )
       ),
       h("div", { style:{ display:"flex", alignItems:"center", gap:10, flexWrap:"wrap" }},
@@ -480,7 +727,6 @@ function DMRTable({ config, onReset }) {
               hasInfluentPH && h("td", { style:TD }, h(NI, { val:infPH[i], step:"0.1", onChange: v => setArr(setInfPH,infPH,i,v) }))
             );
           }),
-          // Totals row
           h("tr", { style:{ background:"#dbeafe", borderTop:"2px solid #93c5fd" }},
             h("td", { style:{ ...TD, fontWeight:800, fontSize:11, textAlign:"center", color:"#1e40af", background:"#bfdbfe" }}, "TOT"),
             h("td", { style:TD }),
@@ -495,6 +741,16 @@ function DMRTable({ config, onReset }) {
       )
     ),
 
+    // ── Storage info footer
+    h("div", { style:{ padding:"0 22px 24px", fontSize:11, color:"#9ca3af",
+      display:"flex", alignItems:"center", gap:6 }},
+      h("svg", { width:12, height:12, viewBox:"0 0 16 16", fill:"none" },
+        h("rect", { x:1, y:1, width:14, height:14, rx:2, stroke:"#9ca3af", strokeWidth:1.5 }),
+        h("path", { d:"M5 1v5h6V1M5 11v4M11 11v4", stroke:"#9ca3af", strokeWidth:1.5, strokeLinecap:"round" })
+      ),
+      "Data auto-saved to your browser. Clears if you clear browser storage."
+    ),
+
     // ── Rapid Entry Modal
     rapidOpen && currentItem && h("div", {
       style:{ position:"fixed", inset:0, background:"rgba(5,15,30,0.75)",
@@ -504,10 +760,10 @@ function DMRTable({ config, onReset }) {
 
         h("div", { style:{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }},
           h("span", { style:{ fontSize:11, color:"#9ca3af", fontWeight:600 }}, "Step " + (rapidStep+1) + " of " + rapidQueue.length),
-          h("button", { onClick:() => setRO(false), style:{ background:"none", border:"none", fontSize:20, cursor:"pointer", color:"#9ca3af", lineHeight:1, padding:0 }}, "✕")
+          h("button", { onClick:()=>setRO(false), style:{ background:"none", border:"none", fontSize:20, cursor:"pointer", color:"#9ca3af", lineHeight:1, padding:0 }}, "✕")
         ),
         h("div", { style:{ height:5, background:"#f1f5f9", borderRadius:3, marginBottom:22, overflow:"hidden" }},
-          h("div", { style:{ height:"100%", width: ((rapidStep+1)/rapidQueue.length*100) + "%",
+          h("div", { style:{ height:"100%", width:((rapidStep+1)/rapidQueue.length*100)+"%",
             background:"linear-gradient(90deg,#0f2640,#38bdf8)", borderRadius:3, transition:"width 0.2s" }})
         ),
         h("div", { style:{ display:"flex", alignItems:"baseline", gap:10, marginBottom:6 }},
@@ -554,9 +810,21 @@ function DMRTable({ config, onReset }) {
 
 // ─── Root ─────────────────────────────────────────────────────────────────────
 function App() {
-  const [config, setConfig] = useState(null);
-  if (!config) return h(SetupScreen, { onStart: setConfig });
-  return h(DMRTable, { config, onReset: () => setConfig(null) });
+  const [config, setConfig]     = useState(null);
+  const [initData, setInitData] = useState(null);
+
+  function handleStart(cfg, data) {
+    setConfig(cfg);
+    setInitData(data || null);
+  }
+
+  function handleReset() {
+    setConfig(null);
+    setInitData(null);
+  }
+
+  if (!config) return h(SetupScreen, { onStart: handleStart });
+  return h(DMRTable, { config, initialData: initData, onReset: handleReset });
 }
 
 ReactDOM.createRoot(document.getElementById("root")).render(h(App, null));
