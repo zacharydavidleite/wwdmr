@@ -3,831 +3,800 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>DMR Universal</title>
+  <title>DMR Universal — Discharge Monitoring Reports</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600;9..40,700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
   <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: 'Segoe UI', system-ui, sans-serif; background: #eef2f7; }
+    :root {
+      --n950:#03111f; --n900:#071a2e; --n800:#0d2641; --n700:#153654;
+      --n600:#1e4a6e; --n500:#2a6496; --n400:#3d80b8; --n300:#6aadd6;
+      --n200:#a8d4ed; --n100:#daeef9; --n50:#f0f8fd;
+      --c400:#22d3ee; --c500:#06b6d4;
+      --s900:#0f172a; --s700:#334155; --s500:#64748b; --s400:#94a3b8;
+      --s300:#cbd5e1; --s200:#e2e8f0; --s100:#f1f5f9; --s50:#f8fafc;
+      --g600:#16a34a; --g100:#dcfce7; --g800:#166534;
+      --a600:#d97706; --a100:#fef3c7; --a800:#92400e; --a500:#f59e0b;
+      --r600:#dc2626; --r100:#fee2e2;
+      --white:#fff; --surf:#f4f7fb;
+      --mono:'DM Mono','Courier New',monospace;
+      --sans:'DM Sans',system-ui,sans-serif;
+    }
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+    body{font-family:var(--sans);background:var(--surf);color:var(--s900);-webkit-font-smoothing:antialiased;}
     input[type=number]::-webkit-inner-spin-button,
-    input[type=number]::-webkit-outer-spin-button { opacity: 1; }
-    select { cursor: pointer; }
-    button { font-family: inherit; }
-    kbd {
-      background: #f3f4f6; border: 1px solid #d1d5db;
-      border-radius: 3px; padding: 1px 5px;
-      font-family: monospace; font-size: 10px;
-    }
-    @keyframes fadeIn {
-      from { opacity: 0; transform: translateY(6px); }
-      to   { opacity: 1; transform: translateY(0); }
-    }
-    @keyframes pulse {
-      0%,100% { opacity: 1; }
-      50%      { opacity: 0.4; }
-    }
-    .autosave-pulse { animation: pulse 1.2s ease-in-out; }
+    input[type=number]::-webkit-outer-spin-button{opacity:1;}
+    select,button{font-family:var(--sans);cursor:pointer;}
+    ::selection{background:var(--n200);color:var(--n900);}
+    ::-webkit-scrollbar{width:6px;height:6px;}
+    ::-webkit-scrollbar-track{background:transparent;}
+    ::-webkit-scrollbar-thumb{background:var(--s300);border-radius:3px;}
+    kbd{background:var(--s100);border:1px solid var(--s300);border-bottom-width:2px;border-radius:4px;padding:1px 6px;font-family:var(--mono);font-size:11px;color:var(--s700);}
+    @keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+    @keyframes fadeIn{from{opacity:0}to{opacity:1}}
+    @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+    .fu{animation:fadeUp .32s ease both;}
+    .fu1{animation:fadeUp .32s .06s ease both;}
+    .fu2{animation:fadeUp .32s .12s ease both;}
+    .fu3{animation:fadeUp .32s .18s ease both;}
+    .fu4{animation:fadeUp .32s .24s ease both;}
+    .fu5{animation:fadeUp .32s .30s ease both;}
+    .fu6{animation:fadeUp .32s .36s ease both;}
   </style>
 </head>
 <body>
 <div id="root"></div>
 <script>
-const { useState, useRef, useEffect, useCallback, createElement: h, Fragment } = React;
+const {useState,useRef,useEffect,createElement:h} = React;
 
-// ─── Constants ────────────────────────────────────────────────────────────────
-const MONTHS = ["January","February","March","April","May","June",
-                "July","August","September","October","November","December"];
-const CY = new Date().getFullYear();
-const YEARS = Array.from({ length: 6 }, (_, i) => CY - 2 + i);
-const fmt1 = v => v !== null ? parseFloat(v.toFixed(1)) : null;
-const disp = v => v !== null ? v.toFixed(1) : null;
-const STORAGE_KEY   = "dmr_universal_sessions";
-const DRAFT_KEY     = "dmr_universal_draft";
-const MAX_SESSIONS  = 12;
+const MONTHS=["January","February","March","April","May","June","July","August","September","October","November","December"];
+const CY=new Date().getFullYear();
+const YEARS=Array.from({length:6},(_,i)=>CY-2+i);
+const fmt1=v=>v!==null?parseFloat(v.toFixed(1)):null;
+const disp=v=>v!==null?v.toFixed(1):null;
+const SK="dmr_sessions", DK="dmr_draft", MAX=12;
 
-function daysInMonth(month, year) {
-  return new Date(year, MONTHS.indexOf(month) + 1, 0).getDate();
-}
-
-function interpolateFlow(tot, day1) {
-  const n = tot.length, flows = new Array(n).fill(null);
-  flows[0] = day1;
-  for (let i = 1; i < n; i++)
-    if (tot[i] !== null && tot[i-1] !== null) flows[i] = tot[i] - tot[i-1];
-  for (let i = 1; i < n; i++) {
-    if (flows[i] !== null) continue;
-    let li = -1, ni = -1;
-    for (let j = i-1; j >= 0; j--) { if (tot[j] !== null) { li = j; break; } }
-    for (let j = i+1; j < n; j++) { if (tot[j] !== null) { ni = j; break; } }
-    if (li !== -1 && ni !== -1) {
-      const d = (tot[ni] - tot[li]) / (ni - li);
-      for (let k = li+1; k <= ni; k++) flows[k] = d;
-    }
+function daysInMonth(m,y){return new Date(y,MONTHS.indexOf(m)+1,0).getDate();}
+function interpolateFlow(tot,day1){
+  const n=tot.length,f=new Array(n).fill(null);
+  f[0]=day1;
+  for(let i=1;i<n;i++) if(tot[i]!==null&&tot[i-1]!==null) f[i]=tot[i]-tot[i-1];
+  for(let i=1;i<n;i++){
+    if(f[i]!==null)continue;
+    let li=-1,ni=-1;
+    for(let j=i-1;j>=0;j--){if(tot[j]!==null){li=j;break;}}
+    for(let j=i+1;j<n;j++){if(tot[j]!==null){ni=j;break;}}
+    if(li!==-1&&ni!==-1){const d=(tot[ni]-tot[li])/(ni-li);for(let k=li+1;k<=ni;k++)f[k]=d;}
   }
-  return flows;
+  return f;
 }
 
-// ─── localStorage helpers ─────────────────────────────────────────────────────
-function loadSessions() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch { return []; }
+// Storage
+function ls(){try{return JSON.parse(localStorage.getItem(SK)||"[]");}catch{return[];}}
+function ss(s){try{localStorage.setItem(SK,JSON.stringify(s));}catch{}}
+function ld(){try{return JSON.parse(localStorage.getItem(DK)||"null");}catch{return null;}}
+function sd(c,d){try{localStorage.setItem(DK,JSON.stringify({config:c,data:d,savedAt:Date.now()}));}catch{}}
+function cd(){try{localStorage.removeItem(DK);}catch{}}
+function upsert(cfg,data){
+  const sessions=ls();
+  const key=cfg.facilityName+"|"+cfg.month+"|"+cfg.year;
+  const idx=sessions.findIndex(s=>s.key===key);
+  const e={key,config:cfg,data,savedAt:Date.now()};
+  if(idx!==-1)sessions[idx]=e;else sessions.unshift(e);
+  if(sessions.length>MAX)sessions.splice(MAX);
+  ss(sessions);
+}
+function delSession(key){ss(ls().filter(s=>s.key!==key));}
+
+function timeAgo(ts){
+  const m=Math.floor((Date.now()-ts)/60000);
+  if(m<1)return"just now";if(m<60)return m+"m ago";
+  const hh=Math.floor(m/60);if(hh<24)return hh+"h ago";
+  const d=Math.floor(hh/24);return d===1?"yesterday":d+"d ago";
+}
+function calcPct(cfg,data){
+  const n=daysInMonth(cfg.month,cfg.year);
+  const {effluentCount:ec,hasInfluent:hi,hasEffluentPH:ep,hasInfluentPH:ip}=cfg;
+  const {eff1,eff2,inf,effPH,infPH}=data;
+  const total=n*(ec+(hi?1:0)+(ep?1:0)+(ip?1:0));
+  const filled=[...eff1,...(ec===2?eff2:[]),...(hi?inf:[]),...(ep?effPH:[]),...(ip?infPH:[])].filter(v=>v!==null).length;
+  return total>0?Math.round((filled/total)*100):0;
 }
 
-function saveSessions(sessions) {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions)); } catch {}
-}
-
-function loadDraft() {
-  try {
-    const raw = localStorage.getItem(DRAFT_KEY);
-    return raw ? JSON.parse(raw) : null;
-  } catch { return null; }
-}
-
-function saveDraft(config, data) {
-  try {
-    localStorage.setItem(DRAFT_KEY, JSON.stringify({
-      config, data, savedAt: Date.now()
-    }));
-  } catch {}
-}
-
-function clearDraft() {
-  try { localStorage.removeItem(DRAFT_KEY); } catch {}
-}
-
-function upsertSession(config, data) {
-  const sessions = loadSessions();
-  const key = config.facilityName + "|" + config.month + "|" + config.year;
-  const existing = sessions.findIndex(s => s.key === key);
-  const entry = { key, config, data, savedAt: Date.now() };
-  if (existing !== -1) sessions[existing] = entry;
-  else sessions.unshift(entry);
-  if (sessions.length > MAX_SESSIONS) sessions.splice(MAX_SESSIONS);
-  saveSessions(sessions);
-}
-
-function deleteSession(key) {
-  const sessions = loadSessions().filter(s => s.key !== key);
-  saveSessions(sessions);
-}
-
-function timeAgo(ts) {
-  const diff = Date.now() - ts;
-  const m = Math.floor(diff / 60000);
-  if (m < 1)  return "just now";
-  if (m < 60) return m + "m ago";
-  const h = Math.floor(m / 60);
-  if (h < 24) return h + "h ago";
-  const d = Math.floor(h / 24);
-  return d === 1 ? "yesterday" : d + "d ago";
-}
-
-// ─── Export ───────────────────────────────────────────────────────────────────
-function exportToXLSX(config, data) {
-  const { facilityName, month, year, effluentCount, hasInfluent,
-          hasEffluentPH, hasInfluentPH, effluentLabels, influentLabel } = config;
-  const { eff1, eff2, inf, eff1Day1, infDay1, effPH, infPH } = data;
-  const numDays = daysInMonth(month, year);
-
-  const combined = effluentCount === 2
-    ? eff1.map((v,i) => v !== null && eff2[i] !== null ? v + eff2[i] : null) : eff1;
-  const efF = interpolateFlow(combined, eff1Day1);
-  const ifF = hasInfluent ? interpolateFlow(inf, infDay1) : null;
-
-  const headers = ["Day"];
-  if (effluentCount === 1) headers.push(effluentLabels[0]);
-  if (effluentCount === 2) { headers.push(effluentLabels[0]); headers.push(effluentLabels[1]); }
-  headers.push("Effluent Daily Flow");
-  if (hasInfluent) { headers.push(influentLabel); headers.push("Influent Daily Flow"); }
-  if (hasEffluentPH) headers.push("Effluent pH");
-  if (hasInfluentPH) headers.push("Influent pH");
-
-  const aoa = [headers];
-  let tEff = 0, tInf = 0;
-  for (let d = 0; d < numDays; d++) {
-    const row = [d + 1];
-    if (effluentCount === 1) row.push(eff1[d] != null ? eff1[d] : "");
-    if (effluentCount === 2) { row.push(eff1[d] != null ? eff1[d] : ""); row.push(eff2[d] != null ? eff2[d] : ""); }
-    const ef = fmt1(efF[d]);
-    row.push(ef !== null ? ef : "");
-    if (ef !== null) tEff += ef;
-    if (hasInfluent) {
-      row.push(inf[d] != null ? inf[d] : "");
-      const ifl = fmt1(ifF[d]);
-      row.push(ifl !== null ? ifl : "");
-      if (ifl !== null) tInf += ifl;
-    }
-    if (hasEffluentPH) row.push(effPH[d] != null ? effPH[d] : "");
-    if (hasInfluentPH) row.push(infPH[d] != null ? infPH[d] : "");
+function exportXLSX(cfg,data){
+  const{facilityName:fn,month,year,effluentCount:ec,hasInfluent:hi,hasEffluentPH:ep,hasInfluentPH:ip,effluentLabels:el,influentLabel:il}=cfg;
+  const{eff1,eff2,inf,eff1Day1,infDay1,effPH,infPH}=data;
+  const nd=daysInMonth(month,year);
+  const comb=ec===2?eff1.map((v,i)=>v!==null&&eff2[i]!==null?v+eff2[i]:null):eff1;
+  const efF=interpolateFlow(comb,eff1Day1);
+  const ifF=hi?interpolateFlow(inf,infDay1):null;
+  const hdr=["Day"];
+  if(ec===1)hdr.push(el[0]);
+  if(ec===2){hdr.push(el[0]);hdr.push(el[1]);}
+  hdr.push("Effluent Daily Flow");
+  if(hi){hdr.push(il);hdr.push("Influent Daily Flow");}
+  if(ep)hdr.push("Effluent pH");
+  if(ip)hdr.push("Influent pH");
+  const aoa=[hdr];let tE=0,tI=0;
+  for(let d=0;d<nd;d++){
+    const row=[d+1];
+    if(ec===1)row.push(eff1[d]!=null?eff1[d]:"");
+    if(ec===2){row.push(eff1[d]!=null?eff1[d]:"");row.push(eff2[d]!=null?eff2[d]:"");}
+    const ef=fmt1(efF[d]);row.push(ef!==null?ef:"");if(ef!==null)tE+=ef;
+    if(hi){row.push(inf[d]!=null?inf[d]:"");const ifl=fmt1(ifF[d]);row.push(ifl!==null?ifl:"");if(ifl!==null)tI+=ifl;}
+    if(ep)row.push(effPH[d]!=null?effPH[d]:"");
+    if(ip)row.push(infPH[d]!=null?infPH[d]:"");
     aoa.push(row);
   }
-  const totRow = ["MONTHLY TOTAL"];
-  if (effluentCount === 1) totRow.push("");
-  if (effluentCount === 2) { totRow.push(""); totRow.push(""); }
-  totRow.push(fmt1(tEff));
-  if (hasInfluent) { totRow.push(""); totRow.push(fmt1(tInf)); }
-  if (hasEffluentPH) totRow.push("");
-  if (hasInfluentPH) totRow.push("");
-  aoa.push(totRow);
-
-  const ws = XLSX.utils.aoa_to_sheet(aoa);
-  ws["!cols"] = [{ wch: 6 }, ...Array(headers.length - 1).fill({ wch: 20 })];
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, month + " " + year);
-  XLSX.writeFile(wb, facilityName.replace(/\s+/g,"_") + "_DMR_" + month + "_" + year + ".xlsx");
+  const tr=["MONTHLY TOTAL"];
+  if(ec===1)tr.push("");if(ec===2){tr.push("");tr.push("");}
+  tr.push(fmt1(tE));
+  if(hi){tr.push("");tr.push(fmt1(tI));}
+  if(ep)tr.push("");if(ip)tr.push("");
+  aoa.push(tr);
+  const ws=XLSX.utils.aoa_to_sheet(aoa);
+  ws["!cols"]=[{wch:6},...Array(hdr.length-1).fill({wch:20})];
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,month+" "+year);
+  XLSX.writeFile(wb,fn.replace(/\s+/g,"_")+"_DMR_"+month+"_"+year+".xlsx");
 }
 
-// ─── Shared styles ────────────────────────────────────────────────────────────
-const TH = { background:"#0f2640", color:"white", padding:"11px 10px", fontSize:11,
-             fontWeight:700, textTransform:"uppercase", letterSpacing:0.5,
-             textAlign:"center", whiteSpace:"nowrap" };
-const TD = { padding:"3px 5px", borderBottom:"1px solid #e5e7eb" };
+// ─ Design tokens (JS)
+const N={
+  n950:"#03111f",n900:"#071a2e",n800:"#0d2641",n700:"#153654",
+  n600:"#1e4a6e",n500:"#2a6496",n400:"#3d80b8",n300:"#6aadd6",
+  n200:"#a8d4ed",n100:"#daeef9",n50:"#f0f8fd",
+  c400:"#22d3ee",
+  s900:"#0f172a",s700:"#334155",s600:"#475569",s500:"#64748b",s400:"#94a3b8",
+  s300:"#cbd5e1",s200:"#e2e8f0",s100:"#f1f5f9",s50:"#f8fafc",
+  g600:"#16a34a",g100:"#dcfce7",g700:"#15803d",
+  a600:"#d97706",a100:"#fef3c7",a800:"#92400e",
+  r600:"#dc2626",r100:"#fee2e2",
+  white:"#fff",surf:"#f4f7fb",
+};
 
-// ─── Small components ─────────────────────────────────────────────────────────
-function Lbl({ children, mt }) {
-  return h("div", { style:{ fontSize:11, fontWeight:700, color:"#374151",
-    textTransform:"uppercase", letterSpacing:0.8, marginBottom:6, marginTop: mt ?? 18 }}, children);
+// ─ Atoms
+function Lbl({children,mt=20}){
+  return h("div",{style:{fontSize:11,fontWeight:600,letterSpacing:".07em",textTransform:"uppercase",color:N.s500,marginBottom:6,marginTop:mt}},children);
 }
-
-function Tog({ active, onClick, children }) {
-  return h("button", { onClick, style:{
-    padding:"9px 18px", borderRadius:7, fontSize:13, fontWeight:600, cursor:"pointer",
-    border: active ? "2px solid #1a3a5c" : "2px solid #e5e7eb",
-    background: active ? "#1a3a5c" : "white",
-    color: active ? "white" : "#6b7280",
-    boxShadow: active ? "0 2px 6px rgba(26,58,92,0.25)" : "none"
-  }}, children);
+function Tog({active,onClick,children}){
+  return h("button",{onClick,style:{
+    padding:"9px 20px",borderRadius:7,fontSize:13,fontWeight:500,cursor:"pointer",
+    border:active?"1.5px solid "+N.n700:"1.5px solid "+N.s200,
+    background:active?N.n800:N.white,color:active?N.white:N.s500,
+    boxShadow:active?"0 1px 5px rgba(13,38,65,.22)":"none",
+    transition:"all .15s",
+  }},children);
 }
-
-function ChkBox({ checked, onChange, children }) {
-  return h("label", { style:{ display:"flex", alignItems:"center", gap:8, fontSize:14,
-    color:"#374151", cursor:"pointer", userSelect:"none" }},
-    h("div", { onClick: () => onChange(!checked), style:{
-      width:18, height:18, borderRadius:4,
-      border: checked ? "none" : "2px solid #d1d5db",
-      background: checked ? "#1a3a5c" : "white",
-      display:"flex", alignItems:"center", justifyContent:"center",
-      flexShrink:0, boxShadow: checked ? "0 1px 4px rgba(26,58,92,0.3)" : "none"
+function Chk({checked,onChange,children}){
+  return h("label",{style:{display:"flex",alignItems:"center",gap:9,fontSize:14,color:N.s700,cursor:"pointer",userSelect:"none"}},
+    h("div",{onClick:()=>onChange(!checked),style:{
+      width:18,height:18,borderRadius:4,flexShrink:0,transition:"all .15s",
+      border:checked?"none":"1.5px solid "+N.s300,
+      background:checked?N.n800:N.white,
+      display:"flex",alignItems:"center",justifyContent:"center",
+      boxShadow:checked?"0 1px 3px rgba(13,38,65,.28)":"none",
     }},
-      checked && h("svg", { width:11, height:8, viewBox:"0 0 11 8", fill:"none" },
-        h("path", { d:"M1 4L4 7L10 1", stroke:"white", strokeWidth:2,
-          strokeLinecap:"round", strokeLinejoin:"round" })
+      checked&&h("svg",{width:10,height:7,viewBox:"0 0 10 7",fill:"none"},
+        h("path",{d:"M1 3.5L3.5 6L9 1",stroke:"white",strokeWidth:1.8,strokeLinecap:"round",strokeLinejoin:"round"})
       )
-    ),
-    children
+    ),children
   );
 }
-
-function StatBox({ label, value }) {
-  return h("div", { style:{ background:"rgba(255,255,255,0.08)", border:"1px solid rgba(255,255,255,0.12)",
-    borderRadius:8, padding:"5px 12px", textAlign:"center" }},
-    h("div", { style:{ color:"#7dd3fc", fontSize:10, fontWeight:600,
-      textTransform:"uppercase", letterSpacing:0.5 }}, label),
-    h("div", { style:{ color:"white", fontSize:14, fontWeight:700, fontFamily:"monospace" }}, value)
-  );
-}
-
-function NI({ val, onChange, step }) {
-  return h("input", {
-    type:"number", step: step || "0.001",
-    style:{ width:"100%", minWidth:80, padding:"6px 8px", border:"1.5px solid #e5e7eb",
-      borderRadius:5, fontSize:13, fontFamily:"monospace", textAlign:"right",
-      outline:"none", boxSizing:"border-box", color:"#111827", background:"white" },
-    value: val !== null && val !== undefined ? val : "",
-    onChange: e => onChange(e.target.value !== "" ? parseFloat(e.target.value) : null),
-    onFocus: e => e.target.style.borderColor = "#1a3a5c",
-    onBlur:  e => e.target.style.borderColor = "#e5e7eb"
+function NI({val,onChange,step}){
+  const[foc,setF]=useState(false);
+  return h("input",{
+    type:"number",step:step||"0.001",
+    style:{
+      width:"100%",padding:"6px 8px",
+      border:"1.5px solid "+(foc?N.n500:N.s200),
+      borderRadius:5,fontSize:13,fontFamily:"'DM Mono','Courier New',monospace",
+      textAlign:"right",outline:"none",
+      background:foc?N.white:N.s50,
+      color:N.s900,transition:"border-color .15s,background .15s",
+      boxShadow:foc?"0 0 0 3px rgba(42,100,150,.10)":"none",
+    },
+    value:val!==null&&val!==undefined?val:"",
+    onChange:e=>onChange(e.target.value!==""?parseFloat(e.target.value):null),
+    onFocus:()=>setF(true),onBlur:()=>setF(false),
   });
 }
+function LogoMark({size=34}){
+  return h("svg",{width:size,height:size,viewBox:"0 0 34 34",fill:"none"},
+    h("rect",{width:34,height:34,rx:8,fill:N.n800}),
+    h("path",{d:"M17 4C12.5 9 8.5 13.5 8.5 18C8.5 23.8 12.5 28 17 28C21.5 28 25.5 23.8 25.5 18C25.5 13.5 21.5 9 17 4Z",fill:N.c400,opacity:.9}),
+    h("path",{d:"M17 10C14.5 13.5 13 16 13 18C13 21.3 14.8 24 17 24C19.2 24 21 21.3 21 18C21 16 19.5 13.5 17 10Z",fill:"white",opacity:.48})
+  );
+}
+function Pill({label,value,accent}){
+  return h("div",{style:{
+    display:"flex",flexDirection:"column",alignItems:"center",
+    padding:"5px 14px",
+    background:"rgba(255,255,255,.07)",
+    border:"1px solid rgba(255,255,255,.09)",
+    borderRadius:8,
+  }},
+    h("span",{style:{fontSize:10,fontWeight:600,letterSpacing:".07em",textTransform:"uppercase",color:accent||N.n200,marginBottom:1}},label),
+    h("span",{style:{fontSize:14,fontWeight:600,fontFamily:"'DM Mono',monospace",color:"#fff",lineHeight:1}},value)
+  );
+}
+function SaveDot({status}){
+  if(status==="idle")return null;
+  const saving=status==="saving";
+  return h("span",{style:{display:"inline-flex",alignItems:"center",gap:5,fontSize:11,color:saving?N.n200:"#6ee7b7",fontWeight:500}},
+    saving
+      ?h("span",{style:{width:6,height:6,borderRadius:"50%",background:N.n200,display:"inline-block",animation:"pulse 1s infinite"}})
+      :h("svg",{width:11,height:8,viewBox:"0 0 11 8",fill:"none"},h("path",{d:"M1 4L4 7L10 1",stroke:"#6ee7b7",strokeWidth:2,strokeLinecap:"round",strokeLinejoin:"round"})),
+    saving?"Saving…":"Saved"
+  );
+}
 
-// ─── Recent Sessions Panel ────────────────────────────────────────────────────
-function RecentSessions({ onLoad, onDismiss }) {
-  const [sessions, setSessions] = useState(loadSessions);
-  const [confirmDelete, setConfirmDelete] = useState(null);
+// ─ Setup screen
+function Setup({onStart}){
+  const[name,setName]=useState("");
+  const[month,setMonth]=useState(MONTHS[new Date().getMonth()]);
+  const[year,setYear]=useState(CY);
+  const[ec,setEC]=useState(1);
+  const[hi,setHI]=useState(false);
+  const[ep,setEP]=useState(true);
+  const[ip,setIP]=useState(false);
+  const[e1l,setE1L]=useState("Effluent Totalizer");
+  const[e2l,setE2L]=useState("Effluent Totalizer 2");
+  const[il,setIL]=useState("Influent Totalizer");
+  const[draft]=useState(ld);
+  const[sessions,setSessions]=useState(ls);
+  const[dc,setDC]=useState(null);
+  const ok=name.trim().length>0;
 
-  function handleDelete(key) {
-    deleteSession(key);
-    setSessions(loadSessions());
-    setConfirmDelete(null);
-  }
+  const IS={
+    width:"100%",padding:"10px 13px",
+    border:"1.5px solid "+N.s200,borderRadius:8,
+    fontSize:14,fontFamily:"'DM Sans',sans-serif",
+    color:N.s900,background:N.white,outline:"none",
+    transition:"border-color .15s",
+  };
+  const SS={
+    ...IS,
+    backgroundImage:`url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='11' height='7' viewBox='0 0 11 7'%3E%3Cpath d='M1 1l4.5 4.5L10 1' stroke='%2394a3b8' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E")`,
+    backgroundRepeat:"no-repeat",backgroundPosition:"right 12px center",
+    paddingRight:34,appearance:"none",WebkitAppearance:"none",
+  };
 
-  if (sessions.length === 0) return null;
-
-  return h("div", { style:{ marginTop:26, borderTop:"1px solid #e5e7eb", paddingTop:20 }},
-    h("div", { style:{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12 }},
-      h("div", { style:{ fontSize:11, fontWeight:700, color:"#6b7280", textTransform:"uppercase", letterSpacing:0.8 }},
-        "Recent DMRs"
+  return h("div",{style:{
+    minHeight:"100vh",display:"flex",alignItems:"stretch",
+  }},
+    // ── Left brand panel
+    h("div",{style:{
+      width:320,flexShrink:0,
+      background:"linear-gradient(168deg,"+N.n950+" 0%,"+N.n800+" 55%,"+N.n700+" 100%)",
+      padding:"48px 40px",
+      display:"flex",flexDirection:"column",
+      position:"sticky",top:0,height:"100vh",overflowY:"auto",
+    }},
+      h("div",{style:{display:"flex",alignItems:"center",gap:11,marginBottom:44}},
+        h(LogoMark,{size:36}),
+        h("div",null,
+          h("div",{style:{color:N.white,fontSize:18,fontWeight:700,letterSpacing:"-.02em",lineHeight:1.1}},"DMR Universal"),
+          h("div",{style:{color:N.n300,fontSize:10,fontWeight:600,letterSpacing:".1em",textTransform:"uppercase",marginTop:3}})
+        )
       ),
-      h("span", { style:{ fontSize:11, color:"#9ca3af" }}, sessions.length + " saved")
+    h("div",{style:{flex:1}},
+  h("p",{style:{
+    color:N.white,
+    fontSize:22,
+    fontWeight:700,
+    lineHeight:1.4,
+    letterSpacing:"-.02em",
+    marginBottom:28,
+    fontStyle:"italic",
+    opacity:.9
+  }},
+    "~stop being lazy and send this out sooner in the month~"
+  ),
+
+  h("div",{style:{marginBottom:18}},
+    h("div",{style:{
+      color:N.n200,
+      fontSize:11,
+      fontWeight:600,
+      letterSpacing:".08em",
+      textTransform:"uppercase",
+      marginBottom:10
+    }},"TODO:"),
+
+    ...[
+      ["auto save","done"],
+      ["fix weekend stuff","done"],
+      ["proper excel export","done"],
+      ["look up methods in similar apps for rapid data stuff",null],
+    ].map(([task,status],i)=>
+      h("div",{key:i,style:{display:"flex",alignItems:"center",gap:10,marginBottom:10}},
+        h("div",{style:{
+          width:7,height:7,borderRadius:"50%",
+          background:status?N.g600:N.s400,
+          flexShrink:0,
+          marginTop:4
+        }}),
+        h("div",null,
+          h("div",{style:{color:N.white,fontSize:13,fontWeight:500}},task),
+          status && h("div",{style:{color:N.g100,fontSize:11,marginTop:1}},status)
+        )
+      )
+    )
+  )
+)
+          h("div",{key:i,style:{display:"flex",gap:12,marginBottom:18}},
+            h("div",{style:{
+              width:7,height:7,borderRadius:"50%",
+              background:N.c400,flexShrink:0,marginTop:6,
+              boxShadow:"0 0 6px rgba(34,211,238,.4)",
+            }}),
+            h("div",null,
+              h("div",{style:{color:N.white,fontSize:13,fontWeight:600,marginBottom:2}},t),
+              h("div",{style:{color:N.n300,fontSize:12,lineHeight:1.55}},d)
+            )
+          )
+        )
+      ),
+      h("div",{style:{borderTop:"1px solid rgba(255,255,255,.07)",paddingTop:18,marginTop:16}},
+        h("div",{style:{color:N.n400,fontSize:11}},
+          "© "+CY+" DMR Universal · Data stored locally in your browser"
+        )
+      )
     ),
-    h("div", { style:{ display:"flex", flexDirection:"column", gap:7 }},
-      sessions.map(s => {
-        const pct = calcProgress(s.config, s.data);
-        return h("div", { key:s.key,
-          style:{ background:"#f8fafc", border:"1px solid #e5e7eb", borderRadius:9,
-            padding:"10px 13px", display:"flex", alignItems:"center", gap:10,
-            animation:"fadeIn 0.2s ease" }},
-          // Color strip
-          h("div", { style:{ width:4, height:44, borderRadius:2, flexShrink:0,
-            background: pct === 100 ? "#16a34a" : pct > 50 ? "#2563eb" : "#e5e7eb" }}),
-          // Info
-          h("div", { style:{ flex:1, minWidth:0 }},
-            h("div", { style:{ fontSize:14, fontWeight:700, color:"#111827",
-              whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }},
-              s.config.facilityName
-            ),
-            h("div", { style:{ fontSize:12, color:"#6b7280", marginTop:2 }},
-              s.config.month + " " + s.config.year + " · " + pct + "% complete · saved " + timeAgo(s.savedAt)
+
+    // ── Right config form
+    h("div",{style:{flex:1,display:"flex",alignItems:"flex-start",justifyContent:"center",padding:"52px 48px",overflowY:"auto",minHeight:"100vh"}},
+      h("div",{style:{width:"100%",maxWidth:480}},
+
+        h("h1",{className:"fu",style:{fontSize:24,fontWeight:700,color:N.s900,letterSpacing:"-.025em",marginBottom:4}},
+          "Configure your DMR"
+        ),
+        h("p",{className:"fu1",style:{fontSize:14,color:N.s500,marginBottom:30,lineHeight:1.6}},
+          "Set up the report structure, then start entering readings."
+        ),
+
+        // Draft banner
+        draft&&h("div",{className:"fu1",style:{
+          background:N.a100,border:"1.5px solid #fcd34d",borderRadius:10,
+          padding:"13px 15px",marginBottom:22,
+          display:"flex",alignItems:"center",gap:12,
+        }},
+          h("div",{style:{width:32,height:32,borderRadius:7,background:"#fde68a",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}},
+            h("svg",{width:15,height:15,viewBox:"0 0 24 24",fill:"none"},
+              h("path",{d:"M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z",stroke:N.a800,strokeWidth:1.8,strokeLinecap:"round"})
             )
           ),
-          // Progress bar
-          h("div", { style:{ width:54, flexShrink:0 }},
-            h("div", { style:{ height:5, background:"#e5e7eb", borderRadius:3, overflow:"hidden" }},
-              h("div", { style:{ height:"100%", width:pct+"%",
-                background: pct===100 ? "#16a34a" : "#2563eb", borderRadius:3 }})
-            ),
-            h("div", { style:{ fontSize:10, color:"#9ca3af", textAlign:"center", marginTop:3 }}, pct+"%")
+          h("div",{style:{flex:1}},
+            h("div",{style:{fontSize:13,fontWeight:600,color:N.a800}},"Unsaved session — "+draft.config.facilityName),
+            h("div",{style:{fontSize:11,color:N.a600,marginTop:2}},draft.config.month+" "+draft.config.year+" · "+timeAgo(draft.savedAt))
           ),
-          // Delete confirm
-          confirmDelete === s.key
-            ? h("div", { style:{ display:"flex", gap:5, flexShrink:0 }},
-                h("button", { onClick:() => handleDelete(s.key), style:{ padding:"5px 10px", background:"#dc2626", color:"white", border:"none", borderRadius:5, fontSize:12, cursor:"pointer", fontWeight:600 }}, "Delete"),
-                h("button", { onClick:()=>setConfirmDelete(null), style:{ padding:"5px 10px", background:"#f3f4f6", color:"#374151", border:"none", borderRadius:5, fontSize:12, cursor:"pointer" }}, "Cancel")
-              )
-            : h("div", { style:{ display:"flex", gap:6, flexShrink:0 }},
-                h("button", { onClick:()=>onLoad(s), style:{ padding:"7px 14px", background:"#0f2640",
-                  color:"white", border:"none", borderRadius:6, fontSize:12,
-                  cursor:"pointer", fontWeight:600 }}, "Load"),
-                h("button", { onClick:()=>setConfirmDelete(s.key), style:{ padding:"7px 10px",
-                  background:"transparent", color:"#9ca3af", border:"1px solid #e5e7eb",
-                  borderRadius:6, fontSize:12, cursor:"pointer" }}, "✕")
-              )
-        );
-      })
+          h("button",{onClick:()=>onStart(draft.config,draft.data),style:{padding:"7px 13px",background:N.a600,color:N.white,border:"none",borderRadius:6,fontSize:12,fontWeight:600,cursor:"pointer",flexShrink:0}},"Resume"),
+          h("button",{onClick:()=>{cd();location.reload();},style:{padding:"7px 8px",background:"transparent",color:N.a600,border:"none",fontSize:15,cursor:"pointer",lineHeight:1}},"✕")
+        ),
+
+        // Facility name
+        h("div",{className:"fu2"},
+          h(Lbl,{mt:0},"Facility name"),
+          h("input",{style:IS,placeholder:"e.g. Windsor WWTP",value:name,
+            onChange:e=>setName(e.target.value),
+            onFocus:e=>{e.target.style.borderColor=N.n500;e.target.style.boxShadow="0 0 0 3px rgba(42,100,150,.10)"},
+            onBlur:e=>{e.target.style.borderColor=N.s200;e.target.style.boxShadow="none"},
+            onKeyDown:e=>{if(e.key==="Enter"&&ok)document.getElementById("go").click();}
+          })
+        ),
+
+        // Month + year
+        h("div",{className:"fu3",style:{display:"flex",gap:14}},
+          h("div",{style:{flex:1}}, h(Lbl,null,"Month"),
+            h("select",{style:SS,value:month,onChange:e=>setMonth(e.target.value)},MONTHS.map(m=>h("option",{key:m},m)))
+          ),
+          h("div",{style:{flex:1}}, h(Lbl,null,"Year"),
+            h("select",{style:SS,value:year,onChange:e=>setYear(+e.target.value)},YEARS.map(y=>h("option",{key:y},y)))
+          )
+        ),
+
+        // Effluent
+        h("div",{className:"fu3"},
+          h(Lbl,null,"Effluent totalizers"),
+          h("div",{style:{display:"flex",gap:8,marginBottom:10}},
+            h(Tog,{active:ec===1,onClick:()=>setEC(1)},"1 Totalizer"),
+            h(Tog,{active:ec===2,onClick:()=>setEC(2)},"2 Totalizers (Q1+Q2)")
+          ),
+          ec===1&&h("input",{style:IS,placeholder:"Column label",value:e1l,onChange:e=>setE1L(e.target.value),
+            onFocus:e=>{e.target.style.borderColor=N.n500;},onBlur:e=>{e.target.style.borderColor=N.s200;}}),
+          ec===2&&h("div",{style:{display:"flex",gap:10}},
+            h("input",{style:{...IS,flex:1},placeholder:"Q1 label",value:e1l,onChange:e=>setE1L(e.target.value)}),
+            h("input",{style:{...IS,flex:1},placeholder:"Q2 label",value:e2l,onChange:e=>setE2L(e.target.value)})
+          )
+        ),
+
+        // Influent
+        h("div",{className:"fu4"},
+          h(Lbl,null,"Influent totalizer"),
+          h("div",{style:{display:"flex",gap:8,marginBottom:hi?10:0}},
+            h(Tog,{active:!hi,onClick:()=>setHI(false)},"None"),
+            h(Tog,{active:hi, onClick:()=>setHI(true)},"Include influent")
+          ),
+          hi&&h("input",{style:IS,placeholder:"Column label",value:il,onChange:e=>setIL(e.target.value),
+            onFocus:e=>{e.target.style.borderColor=N.n500;},onBlur:e=>{e.target.style.borderColor=N.s200;}})
+        ),
+
+        // pH
+        h("div",{className:"fu4"},
+          h(Lbl,null,"pH columns"),
+          h("div",{style:{display:"flex",gap:24,paddingTop:2}},
+            h(Chk,{checked:ep,onChange:setEP},"Effluent pH"),
+            h(Chk,{checked:ip,onChange:setIP},"Influent pH")
+          )
+        ),
+
+        // Summary strip
+        h("div",{className:"fu5",style:{
+          marginTop:26,padding:"11px 15px",
+          background:N.n50,borderRadius:9,border:"1.5px solid "+N.n100,
+          display:"flex",alignItems:"center",justifyContent:"space-between",
+        }},
+          h("span",{style:{fontSize:13,color:N.n600}},
+            h("span",{style:{fontWeight:600}},[
+              ec===1?"1 effluent col":"2 effluent cols",
+              hi?" · influent":"",ep?" · eff.pH":"",ip?" · inf.pH":"",
+            ].join(""))
+          ),
+          h("span",{style:{fontSize:13,fontWeight:600,color:N.n700,fontFamily:"'DM Mono',monospace"}},
+            daysInMonth(month,year)+" days"
+          )
+        ),
+
+        // CTA
+        h("button",{id:"go",disabled:!ok,className:"fu5",style:{
+          width:"100%",marginTop:14,padding:"13px",
+          background:ok?"linear-gradient(135deg,"+N.n800+","+N.n600+")":N.s100,
+          color:ok?N.white:N.s400,border:"none",borderRadius:9,
+          fontSize:15,fontWeight:600,cursor:ok?"pointer":"not-allowed",
+          boxShadow:ok?"0 4px 16px rgba(13,38,65,.26)":"none",
+          transition:"all .2s",letterSpacing:".01em",
+        },
+          onClick:()=>onStart({
+            facilityName:name.trim(),month,year,effluentCount:ec,hasInfluent:hi,
+            hasEffluentPH:ep,hasInfluentPH:ip,effluentLabels:[e1l,e2l],influentLabel:il
+          })
+        }, ok?"Open Data Entry →":"Enter facility name to continue"),
+
+        // Recent
+        sessions.length>0&&h("div",{className:"fu6",style:{marginTop:36}},
+          h("div",{style:{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}},
+            h("span",{style:{fontSize:11,fontWeight:600,textTransform:"uppercase",letterSpacing:".07em",color:N.s500}},"Recent reports"),
+            h("span",{style:{fontSize:11,color:N.s400}},sessions.length+" saved")
+          ),
+          h("div",{style:{display:"flex",flexDirection:"column",gap:8}},
+            sessions.map(s=>{
+              const pct=calcPct(s.config,s.data);
+              const sc=pct===100?N.g600:pct>0?N.n500:N.s200;
+              return h("div",{key:s.key,style:{
+                background:N.white,border:"1.5px solid "+N.s200,borderRadius:10,
+                padding:"12px 14px",display:"flex",alignItems:"center",gap:12,
+                transition:"border-color .15s",
+              }},
+                // Donut progress ring
+                h("div",{style:{
+                  width:38,height:38,borderRadius:"50%",flexShrink:0,
+                  background:`conic-gradient(${sc} ${pct*3.6}deg,${N.s100} 0deg)`,
+                  display:"flex",alignItems:"center",justifyContent:"center",
+                }},
+                  h("div",{style:{width:26,height:26,borderRadius:"50%",background:N.white,display:"flex",alignItems:"center",justifyContent:"center"}},
+                    h("span",{style:{fontSize:9,fontWeight:700,fontFamily:"'DM Mono',monospace",color:N.s700}},pct+"%")
+                  )
+                ),
+                h("div",{style:{flex:1,minWidth:0}},
+                  h("div",{style:{fontSize:14,fontWeight:600,color:N.s900,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},s.config.facilityName),
+                  h("div",{style:{fontSize:12,color:N.s500,marginTop:2}},s.config.month+" "+s.config.year+" · "+timeAgo(s.savedAt))
+                ),
+                dc===s.key
+                  ?h("div",{style:{display:"flex",gap:6,flexShrink:0}},
+                    h("button",{onClick:()=>{delSession(s.key);setSessions(ls());setDC(null);},style:{padding:"6px 12px",background:N.r600,color:N.white,border:"none",borderRadius:6,fontSize:12,cursor:"pointer",fontWeight:600}},"Delete"),
+                    h("button",{onClick:()=>setDC(null),style:{padding:"6px 10px",background:N.s100,color:N.s700,border:"none",borderRadius:6,fontSize:12,cursor:"pointer"}},"Cancel")
+                  )
+                  :h("div",{style:{display:"flex",gap:7,flexShrink:0}},
+                    h("button",{onClick:()=>onStart(s.config,s.data),style:{padding:"7px 15px",background:N.n800,color:N.white,border:"none",borderRadius:7,fontSize:12,fontWeight:600,cursor:"pointer"}},"Load"),
+                    h("button",{onClick:()=>setDC(s.key),style:{padding:"7px 9px",background:"transparent",color:N.s400,border:"1.5px solid "+N.s200,borderRadius:7,fontSize:13,cursor:"pointer"}},"✕")
+                  )
+              );
+            })
+          )
+        )
+      )
     )
   );
 }
 
-// ─── progress helper ──────────────────────────────────────────────────────────
-function calcProgress(config, data) {
-  const numDays = daysInMonth(config.month, config.year);
-  const { effluentCount, hasInfluent, hasEffluentPH, hasInfluentPH } = config;
-  const { eff1, eff2, inf, effPH, infPH } = data;
-  const total = numDays * (effluentCount + (hasInfluent?1:0) + (hasEffluentPH?1:0) + (hasInfluentPH?1:0));
-  const filled = [
-    ...eff1, ...(effluentCount===2 ? eff2 : []),
-    ...(hasInfluent ? inf : []),
-    ...(hasEffluentPH ? effPH : []),
-    ...(hasInfluentPH ? infPH : [])
-  ].filter(v => v !== null).length;
-  return total > 0 ? Math.round((filled / total) * 100) : 0;
-}
+// ─ DMR Table
+function DMRTable({config,initialData,onReset}){
+  const{facilityName:fn,month,year,effluentCount:ec,hasInfluent:hi,hasEffluentPH:ep,hasInfluentPH:ip,effluentLabels:el,influentLabel:il}=config;
+  const nd=daysInMonth(month,year);
+  const init=()=>new Array(nd).fill(null);
+  const s=initialData||{};
 
-// ─── Setup Screen ─────────────────────────────────────────────────────────────
-function SetupScreen({ onStart }) {
-  const [facilityName, setFacilityName] = useState("");
-  const [month, setMonth]       = useState(MONTHS[new Date().getMonth()]);
-  const [year,  setYear]        = useState(CY);
-  const [effluentCount, setEC]  = useState(1);
-  const [hasInfluent,   setHI]  = useState(false);
-  const [hasEffPH,      setEPH] = useState(true);
-  const [hasInfPH,      setIPH] = useState(false);
-  const [eff1Label, setE1L] = useState("Effluent Totalizer");
-  const [eff2Label, setE2L] = useState("Effluent Totalizer 2");
-  const [infLabel,  setIL]  = useState("Influent Totalizer");
-  const [draftBanner, setDraftBanner] = useState(() => loadDraft());
-  const canStart = facilityName.trim().length > 0;
+  const[eff1,setEff1]=useState(()=>s.eff1||init());
+  const[eff2,setEff2]=useState(()=>s.eff2||init());
+  const[inf,setInf]=useState(()=>s.inf||init());
+  const[eff1Day1,setED1]=useState(()=>s.eff1Day1??null);
+  const[infDay1,setID1]=useState(()=>s.infDay1??null);
+  const[effPH,setEffPH]=useState(()=>s.effPH||init());
+  const[infPH,setInfPH]=useState(()=>s.infPH||init());
+  const[xFlash,setXF]=useState(false);
+  const[saveStatus,setSS]=useState("idle");
+  const[ro,setRO]=useState(false);
+  const[rq,setRQ]=useState([]);
+  const[rs,setRS]=useState(0);
+  const[rv,setRV]=useState("");
+  const[js,setJS]=useState(false);
+  const rRef=useRef(null);
+  const st=useRef(null),se=useRef(null);
 
-  const IS = { width:"100%", padding:"10px 13px", border:"1.5px solid #d1d5db",
-    borderRadius:7, fontSize:14, fontFamily:"inherit", color:"#111827",
-    outline:"none", boxSizing:"border-box" };
-  const SS = { ...IS, background:"white",
-    backgroundImage:`url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%236b7280' strokeWidth='1.5' fill='none' strokeLinecap='round'/%3E%3C/svg%3E")`,
-    backgroundRepeat:"no-repeat", backgroundPosition:"right 12px center",
-    paddingRight:34, appearance:"none", WebkitAppearance:"none" };
+  const comb=ec===2?eff1.map((v,i)=>v!==null&&eff2[i]!==null?v+eff2[i]:null):eff1;
+  const efF=interpolateFlow(comb,eff1Day1);
+  const ifF=hi?interpolateFlow(inf,infDay1):null;
+  const tEff=efF.filter(v=>v!==null).reduce((a,b)=>a+b,0);
+  const tInf=ifF?ifF.filter(v=>v!==null).reduce((a,b)=>a+b,0):0;
+  const tCells=nd*(ec+(hi?1:0)+(ep?1:0)+(ip?1:0));
+  const fCells=[...eff1,...(ec===2?eff2:[]),...(hi?inf:[]),...(ep?effPH:[]),...(ip?infPH:[])].filter(v=>v!==null).length;
+  const pct=tCells>0?Math.round((fCells/tCells)*100):0;
+  const data={eff1,eff2,inf,eff1Day1,infDay1,effPH,infPH};
 
-  function handleLoadDraft() {
-    const d = loadDraft();
-    if (d) onStart(d.config, d.data);
-  }
+  useEffect(()=>{
+    clearTimeout(st.current);clearTimeout(se.current);
+    setSS("saving");
+    st.current=setTimeout(()=>{sd(config,data);setSS("saved");setTimeout(()=>setSS("idle"),2500);},700);
+    se.current=setTimeout(()=>upsert(config,data),1400);
+    return()=>{clearTimeout(st.current);clearTimeout(se.current);};
+  },[eff1,eff2,inf,eff1Day1,infDay1,effPH,infPH]);
 
-  function handleLoadSession(session) {
-    onStart(session.config, session.data);
-  }
-
-  return h("div", { style:{ minHeight:"100vh",
-    background:"linear-gradient(160deg,#071520 0%,#0f2640 45%,#071520 100%)",
-    display:"flex", alignItems:"center", justifyContent:"center", padding:20 }},
-
-    h("div", { style:{ background:"white", borderRadius:14, padding:"38px 42px",
-      width:"100%", maxWidth:560, boxShadow:"0 28px 70px rgba(0,0,0,0.4)",
-      maxHeight:"92vh", overflowY:"auto" }},
-
-      // Logo
-      h("div", { style:{ display:"flex", alignItems:"center", gap:12, marginBottom:26 }},
-        h("svg", { width:38, height:38, viewBox:"0 0 38 38", fill:"none" },
-          h("circle", { cx:19, cy:19, r:19, fill:"#0f2640" }),
-          h("path", { d:"M19 5 C14.5 10 10 14.5 10 19 C10 24.8 14 29 19 29 C24 29 28 24.8 28 19 C28 14.5 23.5 10 19 5Z", fill:"#38bdf8", opacity:0.9 }),
-          h("path", { d:"M19 11 C16.5 14.5 15 17 15 19 C15 22.3 16.8 25 19 25 C21.2 25 23 22.3 23 19 C23 17 21.5 14.5 19 11Z", fill:"white", opacity:0.55 })
-        ),
-        h("div", null,
-          h("div", { style:{ fontSize:20, fontWeight:800, color:"#0f2640", letterSpacing:0.5 }}, "DMR Universal"),
-          h("div", { style:{ fontSize:11, color:"#38bdf8", fontWeight:600, letterSpacing:0.5 }}, "Discharge Monitoring Report")
-        )
-      ),
-
-      // Draft recovery banner
-      draftBanner && h("div", { style:{ background:"#fffbeb", border:"1px solid #fcd34d",
-        borderRadius:9, padding:"12px 14px", marginBottom:20, display:"flex",
-        alignItems:"center", gap:12 }},
-        h("div", { style:{ fontSize:18 }}, "↩"),
-        h("div", { style:{ flex:1 }},
-          h("div", { style:{ fontSize:13, fontWeight:700, color:"#92400e" }},
-            "Unsaved session found"
-          ),
-          h("div", { style:{ fontSize:12, color:"#b45309", marginTop:2 }},
-            draftBanner.config.facilityName + " · " +
-            draftBanner.config.month + " " + draftBanner.config.year +
-            " · " + timeAgo(draftBanner.savedAt)
-          )
-        ),
-        h("button", { onClick:handleLoadDraft, style:{
-          padding:"8px 14px", background:"#b45309", color:"white",
-          border:"none", borderRadius:6, fontSize:13, fontWeight:700,
-          cursor:"pointer" }}, "Resume"),
-        h("button", { onClick:() => { clearDraft(); setDraftBanner(null); }, style:{
-          padding:"8px 10px", background:"transparent", color:"#9ca3af",
-          border:"none", fontSize:16, cursor:"pointer", lineHeight:1 }}, "✕")
-      ),
-
-      h("h1", { style:{ fontSize:22, fontWeight:700, color:"#0f2640", margin:"0 0 4px" }}, "Configure Your DMR"),
-      h("p",  { style:{ fontSize:13, color:"#6b7280", margin:"0 0 24px" }}, "Set up your report before entering data"),
-
-      h(Lbl, { mt:0 }, "Facility Name"),
-      h("input", { style:IS, placeholder:"e.g. Windsor WWTP", value:facilityName,
-        onChange: e => setFacilityName(e.target.value),
-        onKeyDown: e => { if (e.key==="Enter" && canStart) document.getElementById("createBtn").click(); }
-      }),
-
-      h("div", { style:{ display:"flex", gap:12 }},
-        h("div", { style:{ flex:1 }},
-          h(Lbl, null, "Month"),
-          h("select", { style:SS, value:month, onChange: e => setMonth(e.target.value) },
-            MONTHS.map(m => h("option", { key:m }, m))
-          )
-        ),
-        h("div", { style:{ flex:1 }},
-          h(Lbl, null, "Year"),
-          h("select", { style:SS, value:year, onChange: e => setYear(+e.target.value) },
-            YEARS.map(y => h("option", { key:y }, y))
-          )
-        )
-      ),
-
-      h(Lbl, null, "Effluent Totalizers"),
-      h("div", { style:{ display:"flex", gap:8, marginBottom:10 }},
-        h(Tog, { active: effluentCount===1, onClick: () => setEC(1) }, "1 Totalizer"),
-        h(Tog, { active: effluentCount===2, onClick: () => setEC(2) }, "2 Totalizers (Q1 + Q2)")
-      ),
-      effluentCount === 1 && h("input", { style:IS, placeholder:"Column label", value:eff1Label, onChange: e => setE1L(e.target.value) }),
-      effluentCount === 2 && h("div", { style:{ display:"flex", gap:10 }},
-        h("input", { style:{ ...IS, flex:1 }, placeholder:"Q1 label", value:eff1Label, onChange: e => setE1L(e.target.value) }),
-        h("input", { style:{ ...IS, flex:1 }, placeholder:"Q2 label", value:eff2Label, onChange: e => setE2L(e.target.value) })
-      ),
-
-      h(Lbl, null, "Influent Totalizer"),
-      h("div", { style:{ display:"flex", gap:8, marginBottom: hasInfluent ? 10 : 0 }},
-        h(Tog, { active: !hasInfluent, onClick: () => setHI(false) }, "No"),
-        h(Tog, { active:  hasInfluent, onClick: () => setHI(true)  }, "Yes")
-      ),
-      hasInfluent && h("input", { style:IS, placeholder:"Column label", value:infLabel, onChange: e => setIL(e.target.value) }),
-
-      h(Lbl, null, "pH Columns"),
-      h("div", { style:{ display:"flex", gap:20 }},
-        h(ChkBox, { checked:hasEffPH, onChange:setEPH }, "Effluent pH"),
-        h(ChkBox, { checked:hasInfPH, onChange:setIPH }, "Influent pH")
-      ),
-
-      h("div", { style:{ marginTop:22, marginBottom:4, padding:"10px 14px",
-        background:"#f0f7ff", borderRadius:8, border:"1px solid #bfdbfe",
-        fontSize:12, color:"#1e40af" }},
-        h("strong", null, "Preview: "),
-        [
-          effluentCount===1 ? "1 effluent totalizer" : "2 effluent totalizers",
-          hasInfluent ? "influent totalizer" : null,
-          hasEffPH ? "effluent pH" : null,
-          hasInfPH ? "influent pH" : null
-        ].filter(Boolean).join(" · "),
-        " — ",
-        h("strong", null, daysInMonth(month, year) + " days")
-      ),
-
-      h("button", {
-        id:"createBtn", disabled:!canStart,
-        style:{ width:"100%", padding:"13px",
-          background: canStart ? "linear-gradient(135deg,#0f2640,#1d6fa4)" : "#e5e7eb",
-          color: canStart ? "white" : "#9ca3af",
-          border:"none", borderRadius:9, fontSize:15, fontWeight:700,
-          cursor: canStart ? "pointer" : "not-allowed", marginTop:14,
-          boxShadow: canStart ? "0 4px 14px rgba(15,38,64,0.3)" : "none" },
-        onClick: () => onStart({
-          facilityName: facilityName.trim(), month, year,
-          effluentCount, hasInfluent,
-          hasEffluentPH: hasEffPH, hasInfluentPH: hasInfPH,
-          effluentLabels: [eff1Label, eff2Label],
-          influentLabel: infLabel
-        })
-      }, "Create DMR →"),
-
-      // Recent sessions
-      h(RecentSessions, { onLoad: handleLoadSession })
-    )
-  );
-}
-
-// ─── Autosave indicator ───────────────────────────────────────────────────────
-function AutosaveIndicator({ status }) {
-  // status: "saving" | "saved" | "idle"
-  if (status === "idle") return null;
-  return h("div", {
-    style:{
-      display:"flex", alignItems:"center", gap:5,
-      fontSize:11, color: status==="saved" ? "#86efac" : "#7dd3fc",
-      transition:"opacity 0.3s"
-    }
-  },
-    status === "saving"
-      ? h("span", { style:{ display:"inline-block", width:8, height:8, borderRadius:"50%",
-          background:"#7dd3fc", animation:"pulse 1s infinite" }})
-      : h("svg", { width:11, height:11, viewBox:"0 0 11 8", fill:"none" },
-          h("path", { d:"M1 4L4 7L10 1", stroke:"#86efac", strokeWidth:2,
-            strokeLinecap:"round", strokeLinejoin:"round" })
-        ),
-    status === "saving" ? "Saving…" : "Saved"
-  );
-}
-
-// ─── DMR Table ────────────────────────────────────────────────────────────────
-function DMRTable({ config, initialData, onReset }) {
-  const { facilityName, month, year, effluentCount, hasInfluent,
-          hasEffluentPH, hasInfluentPH, effluentLabels, influentLabel } = config;
-  const numDays = daysInMonth(month, year);
-  const init = () => new Array(numDays).fill(null);
-
-  // If loaded from storage, populate; otherwise blank
-  const seed = initialData || {};
-  const [eff1, setEff1]     = useState(() => seed.eff1    || init());
-  const [eff2, setEff2]     = useState(() => seed.eff2    || init());
-  const [inf,  setInf]      = useState(() => seed.inf     || init());
-  const [eff1Day1, setED1]  = useState(() => seed.eff1Day1 ?? null);
-  const [infDay1,  setID1]  = useState(() => seed.infDay1  ?? null);
-  const [effPH, setEffPH]   = useState(() => seed.effPH   || init());
-  const [infPH, setInfPH]   = useState(() => seed.infPH   || init());
-  const [exportFlash, setEF] = useState(false);
-  const [saveStatus, setSaveStatus] = useState("idle");
-  const saveTimer = useRef(null);
-  const sessionTimer = useRef(null);
-
-  const [rapidOpen,  setRO] = useState(false);
-  const [rapidQueue, setRQ] = useState([]);
-  const [rapidStep,  setRS] = useState(0);
-  const [rapidValue, setRV] = useState("");
-  const [justSaved,  setJS] = useState(false);
-  const rapidRef = useRef(null);
-
-  const combined = effluentCount === 2
-    ? eff1.map((v,i) => v !== null && eff2[i] !== null ? v + eff2[i] : null) : eff1;
-  const efF = interpolateFlow(combined, eff1Day1);
-  const ifF = hasInfluent ? interpolateFlow(inf, infDay1) : null;
-
-  const totalEff = efF.filter(v=>v!==null).reduce((a,b)=>a+b,0);
-  const totalInf = ifF ? ifF.filter(v=>v!==null).reduce((a,b)=>a+b,0) : 0;
-
-  const totalInputCells = numDays * (effluentCount + (hasInfluent?1:0) + (hasEffluentPH?1:0) + (hasInfluentPH?1:0));
-  const filledCells = [
-    ...eff1, ...(effluentCount===2 ? eff2 : []),
-    ...(hasInfluent ? inf : []),
-    ...(hasEffluentPH ? effPH : []),
-    ...(hasInfluentPH ? infPH : [])
-  ].filter(v => v !== null).length;
-  const pct = totalInputCells > 0 ? Math.round((filledCells / totalInputCells) * 100) : 0;
-
-  // ── Autosave on any data change ────────────────────────────────────────────
-  const currentData = { eff1, eff2, inf, eff1Day1, infDay1, effPH, infPH };
-
-  useEffect(() => {
-    // Debounced draft save (immediate local)
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-    setSaveStatus("saving");
-    saveTimer.current = setTimeout(() => {
-      saveDraft(config, currentData);
-      setSaveStatus("saved");
-      setTimeout(() => setSaveStatus("idle"), 2200);
-    }, 800);
-
-    // Debounced session upsert (1.5s)
-    if (sessionTimer.current) clearTimeout(sessionTimer.current);
-    sessionTimer.current = setTimeout(() => {
-      upsertSession(config, currentData);
-    }, 1500);
-
-    return () => {
-      clearTimeout(saveTimer.current);
-      clearTimeout(sessionTimer.current);
-    };
-  }, [eff1, eff2, inf, eff1Day1, infDay1, effPH, infPH]);
-
-  function buildQueue() {
-    const q = [];
-    for (let d = 1; d <= numDays; d++) {
-      q.push({ type:"eff1", day:d, label: effluentLabels[0] });
-      if (effluentCount===2) q.push({ type:"eff2", day:d, label: effluentLabels[1] });
-      if (hasInfluent)       q.push({ type:"inf",  day:d, label: influentLabel });
-      if (d===1) {
-        q.push({ type:"eff1day1", day:1, label:"Day 1 Effluent Flow" });
-        if (hasInfluent) q.push({ type:"infday1", day:1, label:"Day 1 Influent Flow" });
-      }
-      if (hasEffluentPH) q.push({ type:"effph", day:d, label:"Effluent pH" });
-      if (hasInfluentPH) q.push({ type:"infph", day:d, label:"Influent pH" });
+  function buildQ(){
+    const q=[];
+    for(let d=1;d<=nd;d++){
+      q.push({type:"eff1",day:d,label:el[0]});
+      if(ec===2)q.push({type:"eff2",day:d,label:el[1]});
+      if(hi)q.push({type:"inf",day:d,label:il});
+      if(d===1){q.push({type:"eff1day1",day:1,label:"Day 1 Effluent Flow"});if(hi)q.push({type:"infday1",day:1,label:"Day 1 Influent Flow"});}
+      if(ep)q.push({type:"effph",day:d,label:"Effluent pH"});
+      if(ip)q.push({type:"infph",day:d,label:"Influent pH"});
     }
     return q;
   }
-
-  function startRapid() { setRQ(buildQueue()); setRS(0); setRV(""); setRO(true); }
-
-  useEffect(() => {
-    if (rapidOpen) setTimeout(() => rapidRef.current && rapidRef.current.focus(), 60);
-  }, [rapidOpen, rapidStep]);
-
-  function commitRapid() {
-    const val = rapidValue !== "" ? parseFloat(rapidValue) : null;
-    const item = rapidQueue[rapidStep];
-    if (!item) return;
-    const upd = (arr, setFn) => { const n=[...arr]; n[item.day-1]=val; setFn(n); };
-    if      (item.type==="eff1")     upd(eff1, setEff1);
-    else if (item.type==="eff2")     upd(eff2, setEff2);
-    else if (item.type==="inf")      upd(inf,  setInf);
-    else if (item.type==="eff1day1") setED1(val);
-    else if (item.type==="infday1")  setID1(val);
-    else if (item.type==="effph")    upd(effPH, setEffPH);
-    else if (item.type==="infph")    upd(infPH, setInfPH);
-    setJS(true); setTimeout(() => setJS(false), 400);
-    const next = rapidStep + 1;
-    if (next >= rapidQueue.length) { setRO(false); return; }
-    setRS(next); setRV("");
+  function startR(){setRQ(buildQ());setRS(0);setRV("");setRO(true);}
+  useEffect(()=>{if(ro)setTimeout(()=>rRef.current&&rRef.current.focus(),60);},[ro,rs]);
+  function commit(){
+    const val=rv!==""?parseFloat(rv):null;
+    const item=rq[rs];if(!item)return;
+    const up=(arr,fn)=>{const n=[...arr];n[item.day-1]=val;fn(n);};
+    if(item.type==="eff1")up(eff1,setEff1);
+    else if(item.type==="eff2")up(eff2,setEff2);
+    else if(item.type==="inf")up(inf,setInf);
+    else if(item.type==="eff1day1")setED1(val);
+    else if(item.type==="infday1")setID1(val);
+    else if(item.type==="effph")up(effPH,setEffPH);
+    else if(item.type==="infph")up(infPH,setInfPH);
+    setJS(true);setTimeout(()=>setJS(false),400);
+    const nx=rs+1;
+    if(nx>=rq.length){setRO(false);return;}
+    setRS(nx);setRV("");
   }
+  const sa=(fn,arr,i,v)=>{const n=[...arr];n[i]=v;fn(n);};
 
-  function handleExport() {
-    exportToXLSX(config, currentData);
-    setEF(true); setTimeout(() => setEF(false), 1800);
-  }
+  // Table styles
+  const TH=(bg)=>({background:bg||N.n800,color:"#fff",padding:"11px 12px",fontSize:11,fontWeight:600,textTransform:"uppercase",letterSpacing:".07em",textAlign:"center",whiteSpace:"nowrap",borderRight:"1px solid rgba(255,255,255,.06)"});
+  const TD={padding:"4px 6px",borderBottom:"1px solid "+N.s100};
+  const now=new Date();
+  const ci=ro?rq[rs]:null;
 
-  function handleReset() {
-    clearDraft();
-    onReset();
-  }
+  return h("div",{style:{minHeight:"100vh",background:N.surf,display:"flex",flexDirection:"column"}},
 
-  const setArr = (setFn, arr, i, v) => { const n=[...arr]; n[i]=v; setFn(n); };
-  const currentItem = rapidOpen ? rapidQueue[rapidStep] : null;
-
-  return h("div", { style:{ minHeight:"100vh", background:"#eef2f7" }},
-
-    // ── Header
-    h("div", { style:{ background:"linear-gradient(135deg,#071520,#0f2640)", padding:"14px 22px",
-      display:"flex", alignItems:"center", justifyContent:"space-between", gap:12, flexWrap:"wrap" }},
-      h("div", { style:{ display:"flex", alignItems:"center", gap:14 }},
-        h("button", { onClick:handleReset, style:{ background:"rgba(255,255,255,0.1)",
-          border:"1px solid rgba(255,255,255,0.18)", color:"white", padding:"7px 13px",
-          borderRadius:7, cursor:"pointer", fontSize:12, fontWeight:500 }}, "← New DMR"),
-        h("div", null,
-          h("div", { style:{ color:"white", fontSize:18, fontWeight:700, lineHeight:1.2 }}, facilityName),
-          h("div", { style:{ color:"#7dd3fc", fontSize:11, display:"flex", alignItems:"center", gap:10 }},
-            "Discharge Monitoring Report — " + month + " " + year,
-            h(AutosaveIndicator, { status: saveStatus })
+    // ── Header bar
+    h("header",{style:{
+      background:"linear-gradient(135deg,"+N.n950+","+N.n800+")",
+      borderBottom:"1px solid rgba(255,255,255,.05)",
+      padding:"0 28px",height:56,
+      display:"flex",alignItems:"center",justifyContent:"space-between",
+      position:"sticky",top:0,zIndex:100,
+      boxShadow:"0 1px 20px rgba(0,0,0,.3)",
+    }},
+      h("div",{style:{display:"flex",alignItems:"center",gap:16}},
+        h("div",{style:{display:"flex",alignItems:"center",gap:9}},
+          h(LogoMark,{size:26}),
+          h("span",{style:{color:N.n300,fontSize:12,fontWeight:500}})
+        ),
+        h("div",{style:{width:1,height:18,background:"rgba(255,255,255,.12)"}}),
+        h("div",null,
+          h("div",{style:{color:"#fff",fontSize:15,fontWeight:600,letterSpacing:"-.01em",lineHeight:1.1}},fn),
+          h("div",{style:{color:N.n300,fontSize:11,display:"flex",alignItems:"center",gap:8,marginTop:1}},
+            "DMR · "+month+" "+year,
+            h("span",{style:{color:"rgba(255,255,255,.15)"}},"·"),
+            h(SaveDot,{status:saveStatus})
           )
         )
       ),
-      h("div", { style:{ display:"flex", alignItems:"center", gap:10, flexWrap:"wrap" }},
-        h(StatBox, { label:"Progress", value: pct + "%" }),
-        h(StatBox, { label:"Eff. Total", value: totalEff.toFixed(1) }),
-        hasInfluent && h(StatBox, { label:"Inf. Total", value: totalInf.toFixed(1) }),
-        h("button", { onClick:startRapid, style:{ background:"#1d4ed8", border:"none",
-          color:"white", padding:"9px 16px", borderRadius:7, cursor:"pointer",
-          fontSize:13, fontWeight:600 }}, "⌨ Rapid Entry"),
-        h("button", { onClick:handleExport, style:{ background: exportFlash ? "#15803d" : "#16a34a",
-          border:"none", color:"white", padding:"9px 16px", borderRadius:7,
-          cursor:"pointer", fontSize:13, fontWeight:600, transition:"background 0.3s" }},
-          exportFlash ? "✓ Downloaded!" : "↓ Export Excel"
-        )
+      h("div",{style:{display:"flex",alignItems:"center",gap:9}},
+        h(Pill,{label:"Progress",value:pct+"%",accent:pct===100?"#6ee7b7":undefined}),
+        h(Pill,{label:"Eff. Total",value:tEff.toFixed(1)}),
+        hi&&h(Pill,{label:"Inf. Total",value:tInf.toFixed(1)}),
+        h("div",{style:{width:1,height:18,background:"rgba(255,255,255,.12)"}}),
+        h("button",{onClick:startR,style:{
+          padding:"6px 15px",background:"rgba(42,100,150,.35)",
+          border:"1px solid rgba(42,100,150,.55)",color:"#fff",
+          borderRadius:7,fontSize:12,fontWeight:500,cursor:"pointer",
+          transition:"all .15s",letterSpacing:".01em",
+        }},"⌨  Rapid Entry"),
+        h("button",{onClick:()=>{exportXLSX(config,data);setXF(true);setTimeout(()=>setXF(false),2000);},style:{
+          padding:"6px 15px",
+          background:xFlash?"rgba(21,128,61,.9)":"rgba(22,163,74,.8)",
+          border:"1px solid "+(xFlash?"rgba(21,128,61,.8)":"rgba(22,163,74,.6)"),
+          color:"#fff",borderRadius:7,fontSize:12,fontWeight:500,
+          cursor:"pointer",transition:"all .2s",letterSpacing:".01em",
+        }},xFlash?"✓  Downloaded":"↓  Export Excel"),
+        h("button",{onClick:()=>{cd();onReset();},style:{
+          padding:"6px 13px",background:"transparent",
+          border:"1px solid rgba(255,255,255,.14)",color:N.n300,
+          borderRadius:7,fontSize:12,cursor:"pointer",transition:"all .15s",
+        }},"← New DMR")
       )
     ),
 
-    // ── Progress strip
-    h("div", { style:{ height:3, background:"#cbd5e1" }},
-      h("div", { style:{ height:"100%", width: pct + "%",
-        background:"linear-gradient(90deg,#0f2640,#38bdf8)", transition:"width 0.4s ease" }})
+    // Progress bar
+    h("div",{style:{height:2,background:N.s200}},
+      h("div",{style:{height:"100%",width:pct+"%",
+        background:"linear-gradient(90deg,"+N.n600+","+N.c400+")",
+        transition:"width .5s cubic-bezier(.4,0,.2,1)",
+      }})
     ),
 
     // ── Table
-    h("div", { style:{ overflowX:"auto", padding:"20px 22px" }},
-      h("table", { style:{ width:"100%", borderCollapse:"collapse", background:"white",
-        borderRadius:10, overflow:"hidden", boxShadow:"0 2px 16px rgba(0,0,0,0.09)" }},
-        h("thead", null,
-          h("tr", null,
-            h("th", { style:{ ...TH, width:44, background:"#0a1e33" }}, "Day"),
-            h("th", { style:TH }, effluentLabels[0]),
-            effluentCount===2 && h("th", { style:TH }, effluentLabels[1]),
-            h("th", { style:{ ...TH, background:"#163d6a" }}, "Eff. Daily Flow"),
-            hasInfluent && h("th", { style:{ ...TH, background:"#1a4a7a" }}, influentLabel),
-            hasInfluent && h("th", { style:{ ...TH, background:"#163d6a" }}, "Inf. Daily Flow"),
-            hasEffluentPH && h("th", { style:{ ...TH, background:"#1d3461" }}, "Effluent pH"),
-            hasInfluentPH && h("th", { style:{ ...TH, background:"#1d3461" }}, "Influent pH")
-          )
-        ),
-        h("tbody", null,
-          ...Array.from({ length: numDays }, (_, i) => {
-            const d = i + 1;
-            const ef  = efF[i];
-            const ifl = ifF ? ifF[i] : null;
-            const now = new Date();
-            const isToday = d === now.getDate() && MONTHS.indexOf(month) === now.getMonth() && year === now.getFullYear();
-            const rowBg = isToday ? "#fffbeb" : i%2===1 ? "#f8fafc" : "white";
-            return h("tr", { key:d, style:{ background:rowBg }},
-              h("td", { style:{ ...TD, fontWeight:700, fontSize:12, textAlign:"center",
-                color: isToday ? "#b45309" : "#374151",
-                background: isToday ? "#fef3c7" : "#f8fafc",
-                borderRight:"1px solid #e5e7eb" }},
-                d,
-                isToday && h("span", { style:{ display:"block", fontSize:9, color:"#b45309", fontWeight:800 }}, "TODAY")
-              ),
-              h("td", { style:TD }, h(NI, { val:eff1[i], onChange: v => setArr(setEff1,eff1,i,v) })),
-              effluentCount===2 && h("td", { style:TD }, h(NI, { val:eff2[i], onChange: v => setArr(setEff2,eff2,i,v) })),
-              h("td", { style:{ ...TD, background:"#f0f7ff", padding:"3px 10px" }},
-                d===1
-                  ? h(NI, { val:eff1Day1, onChange:setED1 })
-                  : h("span", { style:{ fontFamily:"monospace", fontSize:13, fontWeight:600,
-                      color: ef!==null ? "#1a3a5c" : "#d1d5db" }},
-                      ef!==null ? disp(ef) : "—"
-                    )
-              ),
-              hasInfluent && h("td", { style:TD }, h(NI, { val:inf[i], onChange: v => setArr(setInf,inf,i,v) })),
-              hasInfluent && h("td", { style:{ ...TD, background:"#f0f7ff", padding:"3px 10px" }},
-                d===1
-                  ? h(NI, { val:infDay1, onChange:setID1 })
-                  : h("span", { style:{ fontFamily:"monospace", fontSize:13, fontWeight:600,
-                      color: ifl!==null ? "#1a3a5c" : "#d1d5db" }},
-                      ifl!==null ? disp(ifl) : "—"
-                    )
-              ),
-              hasEffluentPH && h("td", { style:TD }, h(NI, { val:effPH[i], step:"0.1", onChange: v => setArr(setEffPH,effPH,i,v) })),
-              hasInfluentPH && h("td", { style:TD }, h(NI, { val:infPH[i], step:"0.1", onChange: v => setArr(setInfPH,infPH,i,v) }))
-            );
-          }),
-          h("tr", { style:{ background:"#dbeafe", borderTop:"2px solid #93c5fd" }},
-            h("td", { style:{ ...TD, fontWeight:800, fontSize:11, textAlign:"center", color:"#1e40af", background:"#bfdbfe" }}, "TOT"),
-            h("td", { style:TD }),
-            effluentCount===2 && h("td", { style:TD }),
-            h("td", { style:{ ...TD, background:"#dbeafe", fontFamily:"monospace", fontWeight:800, fontSize:14, color:"#1e40af", padding:"6px 10px" }}, totalEff.toFixed(1)),
-            hasInfluent && h("td", { style:TD }),
-            hasInfluent && h("td", { style:{ ...TD, background:"#dbeafe", fontFamily:"monospace", fontWeight:800, fontSize:14, color:"#1e40af", padding:"6px 10px" }}, totalInf.toFixed(1)),
-            hasEffluentPH && h("td", { style:TD }),
-            hasInfluentPH && h("td", { style:TD })
+    h("main",{style:{padding:"22px 28px",flex:1}},
+      h("div",{style:{overflowX:"auto",borderRadius:12,boxShadow:"0 1px 3px rgba(0,0,0,.06),0 4px 16px rgba(0,0,0,.07)",border:"1px solid "+N.s200}},
+        h("table",{style:{width:"100%",borderCollapse:"collapse",background:N.white,borderRadius:12,overflow:"hidden"}},
+          h("thead",null,
+            h("tr",null,
+              h("th",{style:{...TH(N.n950),width:48}},"Day"),
+              h("th",{style:TH()},el[0]),
+              ec===2&&h("th",{style:TH()},el[1]),
+              h("th",{style:TH(N.n700)},"Eff. Daily Flow"),
+              hi&&h("th",{style:TH(N.n600)},il),
+              hi&&h("th",{style:TH(N.n700)},"Inf. Daily Flow"),
+              ep&&h("th",{style:{...TH(),...{background:"#1b3258"}}},"Effluent pH"),
+              ip&&h("th",{style:{...TH(),...{background:"#1b3258"}}},"Influent pH")
+            )
+          ),
+          h("tbody",null,
+            ...Array.from({length:nd},(_,i)=>{
+              const d=i+1;
+              const ef=efF[i],ifl=ifF?ifF[i]:null;
+              const isToday=d===now.getDate()&&MONTHS.indexOf(month)===now.getMonth()&&year===now.getFullYear();
+              const rowBg=isToday?"#fffcf0":i%2===1?N.s50:N.white;
+              return h("tr",{key:d,style:{background:rowBg}},
+                h("td",{style:{
+                  ...TD,fontWeight:700,fontSize:12,textAlign:"center",
+                  color:isToday?N.a800:N.s400,
+                  background:isToday?"#fef3c7":N.s50,
+                  borderRight:"1px solid "+N.s200,width:48,
+                }},
+                  d,
+                  isToday&&h("div",{style:{fontSize:8,color:N.a600,fontWeight:700,textTransform:"uppercase",letterSpacing:".04em",marginTop:1}},"today")
+                ),
+                h("td",{style:TD},h(NI,{val:eff1[i],onChange:v=>sa(setEff1,eff1,i,v)})),
+                ec===2&&h("td",{style:TD},h(NI,{val:eff2[i],onChange:v=>sa(setEff2,eff2,i,v)})),
+                h("td",{style:{...TD,background:"#f0f6ff",padding:"4px 10px",borderLeft:"1px solid #deedfb",borderRight:"1px solid #deedfb"}},
+                  d===1
+                    ?h(NI,{val:eff1Day1,onChange:setED1})
+                    :h("span",{style:{fontFamily:"'DM Mono',monospace",fontSize:13,fontWeight:500,color:ef!==null?N.n700:N.s300,display:"block",textAlign:"right",padding:"2px 4px"}},ef!==null?disp(ef):"—")
+                ),
+                hi&&h("td",{style:TD},h(NI,{val:inf[i],onChange:v=>sa(setInf,inf,i,v)})),
+                hi&&h("td",{style:{...TD,background:"#f0f6ff",padding:"4px 10px",borderLeft:"1px solid #deedfb",borderRight:"1px solid #deedfb"}},
+                  d===1
+                    ?h(NI,{val:infDay1,onChange:setID1})
+                    :h("span",{style:{fontFamily:"'DM Mono',monospace",fontSize:13,fontWeight:500,color:ifl!==null?N.n700:N.s300,display:"block",textAlign:"right",padding:"2px 4px"}},ifl!==null?disp(ifl):"—")
+                ),
+                ep&&h("td",{style:TD},h(NI,{val:effPH[i],step:"0.1",onChange:v=>sa(setEffPH,effPH,i,v)})),
+                ip&&h("td",{style:TD},h(NI,{val:infPH[i],step:"0.1",onChange:v=>sa(setInfPH,infPH,i,v)}))
+              );
+            }),
+            // Totals
+            h("tr",{style:{background:N.n50,borderTop:"2px solid "+N.n100}},
+              h("td",{style:{...TD,fontWeight:700,fontSize:11,textAlign:"center",color:N.n700,background:N.n100,letterSpacing:".05em"}},"TOT"),
+              h("td",{style:TD}),
+              ec===2&&h("td",{style:TD}),
+              h("td",{style:{...TD,background:N.n50,fontFamily:"'DM Mono',monospace",fontWeight:700,fontSize:14,color:N.n700,padding:"8px 12px",textAlign:"right"}},tEff.toFixed(1)),
+              hi&&h("td",{style:TD}),
+              hi&&h("td",{style:{...TD,background:N.n50,fontFamily:"'DM Mono',monospace",fontWeight:700,fontSize:14,color:N.n700,padding:"8px 12px",textAlign:"right"}},tInf.toFixed(1)),
+              ep&&h("td",{style:TD}),
+              ip&&h("td",{style:TD})
+            )
           )
         )
+      ),
+      h("div",{style:{marginTop:14,display:"flex",alignItems:"center",gap:6,fontSize:11,color:N.s400}},
+        h("svg",{width:12,height:12,viewBox:"0 0 24 24",fill:"none"},
+          h("path",{d:"M12 22C6.477 22 2 17.523 2 12S6.477 2 12 2s10 4.477 10 10-4.477 10-10 10zm0-11v5m0-8v1",stroke:N.s400,strokeWidth:1.8,strokeLinecap:"round"})
+        ),
+        "Data auto-saves to your browser's local storage. Export to Excel before clearing browser data."
       )
     ),
 
-    // ── Storage info footer
-    h("div", { style:{ padding:"0 22px 24px", fontSize:11, color:"#9ca3af",
-      display:"flex", alignItems:"center", gap:6 }},
-      h("svg", { width:12, height:12, viewBox:"0 0 16 16", fill:"none" },
-        h("rect", { x:1, y:1, width:14, height:14, rx:2, stroke:"#9ca3af", strokeWidth:1.5 }),
-        h("path", { d:"M5 1v5h6V1M5 11v4M11 11v4", stroke:"#9ca3af", strokeWidth:1.5, strokeLinecap:"round" })
-      ),
-      "Data auto-saved to your browser. Clears if you clear browser storage."
-    ),
-
-    // ── Rapid Entry Modal
-    rapidOpen && currentItem && h("div", {
-      style:{ position:"fixed", inset:0, background:"rgba(5,15,30,0.75)",
-        display:"flex", alignItems:"center", justifyContent:"center", zIndex:1000 }},
-      h("div", { style:{ background:"white", borderRadius:14, padding:"28px 32px",
-        width:"100%", maxWidth:390, boxShadow:"0 32px 80px rgba(0,0,0,0.45)" }},
-
-        h("div", { style:{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }},
-          h("span", { style:{ fontSize:11, color:"#9ca3af", fontWeight:600 }}, "Step " + (rapidStep+1) + " of " + rapidQueue.length),
-          h("button", { onClick:()=>setRO(false), style:{ background:"none", border:"none", fontSize:20, cursor:"pointer", color:"#9ca3af", lineHeight:1, padding:0 }}, "✕")
+    // ── Rapid Entry modal
+    ro&&ci&&h("div",{
+      style:{position:"fixed",inset:0,background:"rgba(3,17,31,.72)",
+        display:"flex",alignItems:"center",justifyContent:"center",zIndex:200,
+        animation:"fadeIn .15s ease",backdropFilter:"blur(2px)"},
+      onClick:e=>{if(e.target===e.currentTarget)setRO(false);}
+    },
+      h("div",{style:{
+        background:N.white,borderRadius:14,padding:"26px 30px",
+        width:"100%",maxWidth:390,
+        boxShadow:"0 32px 80px rgba(0,0,0,.38),0 8px 24px rgba(0,0,0,.18)",
+        animation:"fadeUp .18s ease",
+      }},
+        h("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}},
+          h("div",{style:{display:"flex",alignItems:"center",gap:8}},
+            h(LogoMark,{size:20}),
+            h("span",{style:{fontSize:11,fontWeight:600,color:N.s500,letterSpacing:".07em",textTransform:"uppercase"}},"Rapid Entry")
+          ),
+          h("div",{style:{display:"flex",alignItems:"center",gap:10}},
+            h("span",{style:{fontSize:11,color:N.s400,fontFamily:"'DM Mono',monospace"}},(rs+1)+"/"+rq.length),
+            h("button",{onClick:()=>setRO(false),style:{background:"none",border:"none",fontSize:18,cursor:"pointer",color:N.s400,lineHeight:1,padding:0}},"✕")
+          )
         ),
-        h("div", { style:{ height:5, background:"#f1f5f9", borderRadius:3, marginBottom:22, overflow:"hidden" }},
-          h("div", { style:{ height:"100%", width:((rapidStep+1)/rapidQueue.length*100)+"%",
-            background:"linear-gradient(90deg,#0f2640,#38bdf8)", borderRadius:3, transition:"width 0.2s" }})
+        h("div",{style:{height:3,background:N.s100,borderRadius:2,marginBottom:22,overflow:"hidden"}},
+          h("div",{style:{height:"100%",width:((rs+1)/rq.length*100)+"%",
+            background:"linear-gradient(90deg,"+N.n800+","+N.c400+")",
+            borderRadius:2,transition:"width .2s ease"
+          }})
         ),
-        h("div", { style:{ display:"flex", alignItems:"baseline", gap:10, marginBottom:6 }},
-          h("span", { style:{ background:"#0f2640", color:"white", borderRadius:20,
-            padding:"3px 10px", fontSize:12, fontWeight:700 }}, "Day " + currentItem.day),
-          justSaved && h("span", { style:{ fontSize:11, color:"#16a34a", fontWeight:600 }}, "✓ Saved")
+        h("div",{style:{display:"flex",alignItems:"center",gap:10,marginBottom:8}},
+          h("span",{style:{background:N.n800,color:"#fff",borderRadius:6,padding:"4px 11px",fontSize:12,fontWeight:600,fontFamily:"'DM Mono',monospace"}},"Day "+ci.day),
+          js&&h("span",{style:{fontSize:12,color:N.g600,fontWeight:600,display:"flex",alignItems:"center",gap:4}},
+            h("svg",{width:11,height:8,viewBox:"0 0 11 8",fill:"none"},h("path",{d:"M1 4L4 7L10 1",stroke:N.g600,strokeWidth:2,strokeLinecap:"round",strokeLinejoin:"round"})),
+            "Saved"
+          )
         ),
-        h("div", { style:{ fontSize:20, fontWeight:700, color:"#0f2640", marginBottom:16 }}, currentItem.label),
-
-        h("input", {
-          ref: rapidRef, type:"number", step:"0.001",
-          style:{ width:"100%", padding:"14px 16px", border:"2px solid #0f2640",
-            borderRadius:9, fontSize:20, fontFamily:"monospace", outline:"none",
-            textAlign:"right", boxSizing:"border-box", marginBottom:8 },
-          placeholder:"—", value:rapidValue,
-          onChange: e => setRV(e.target.value),
-          onKeyDown: e => { if(e.key==="Enter") commitRapid(); if(e.key==="Escape") setRO(false); }
+        h("div",{style:{fontSize:21,fontWeight:700,color:N.n900,marginBottom:14,letterSpacing:"-.02em"}},ci.label),
+        h("input",{
+          ref:rRef,type:"number",step:"0.001",
+          style:{width:"100%",padding:"13px 15px",border:"2px solid "+N.n800,borderRadius:9,
+            fontSize:22,fontFamily:"'DM Mono',monospace",outline:"none",textAlign:"right",
+            color:N.n900,background:N.s50,boxSizing:"border-box",marginBottom:8},
+          placeholder:"—",value:rv,
+          onChange:e=>setRV(e.target.value),
+          onKeyDown:e=>{if(e.key==="Enter")commit();if(e.key==="Escape")setRO(false);}
         }),
-
-        h("div", { style:{ fontSize:11, color:"#9ca3af", textAlign:"center", marginBottom:18 }},
-          h("kbd", null, "Enter"), " to save & advance · ", h("kbd", null, "Esc"), " to close · leave blank to skip"
+        h("div",{style:{fontSize:11,color:N.s400,textAlign:"center",marginBottom:16}},
+          h("kbd",null,"Enter")," to save · ",h("kbd",null,"Esc")," to close · blank to skip"
         ),
-
-        rapidStep + 1 < rapidQueue.length && h("div", {
-          style:{ fontSize:11, color:"#9ca3af", marginBottom:14, padding:"6px 10px",
-            background:"#f9fafb", borderRadius:6 }},
-          "Next: ",
-          h("strong", { style:{ color:"#374151" }},
-            "Day " + rapidQueue[rapidStep+1].day + " — " + rapidQueue[rapidStep+1].label)
+        rs+1<rq.length&&h("div",{style:{
+          fontSize:12,color:N.s500,marginBottom:14,padding:"8px 11px",
+          background:N.s50,borderRadius:7,border:"1px solid "+N.s200,
+        }},
+          "Next → ",h("span",{style:{fontWeight:600,color:N.s700}},"Day "+rq[rs+1].day+" · "+rq[rs+1].label)
         ),
-
-        h("div", { style:{ display:"flex", gap:10, justifyContent:"flex-end" }},
-          h("button", { onClick:() => { setRV(""); commitRapid(); },
-            style:{ padding:"10px 18px", background:"#f3f4f6", border:"none",
-              borderRadius:7, fontSize:13, color:"#6b7280", cursor:"pointer" }}, "Skip"),
-          h("button", { onClick:commitRapid,
-            style:{ padding:"10px 24px", background:"#0f2640", border:"none",
-              borderRadius:7, fontSize:13, color:"white", cursor:"pointer", fontWeight:700 }}, "Save & Next →")
+        h("div",{style:{display:"flex",gap:9,justifyContent:"flex-end"}},
+          h("button",{onClick:()=>{setRV("");commit();},style:{padding:"10px 17px",background:N.s100,border:"none",borderRadius:7,fontSize:13,color:N.s600,cursor:"pointer",fontWeight:500}},"Skip"),
+          h("button",{onClick:commit,style:{padding:"10px 24px",background:N.n800,border:"none",borderRadius:7,fontSize:13,color:"#fff",cursor:"pointer",fontWeight:600,letterSpacing:".01em"}},"Save & Next →")
         )
       )
     )
   );
 }
 
-// ─── Root ─────────────────────────────────────────────────────────────────────
-function App() {
-  const [config, setConfig]     = useState(null);
-  const [initData, setInitData] = useState(null);
-
-  function handleStart(cfg, data) {
-    setConfig(cfg);
-    setInitData(data || null);
-  }
-
-  function handleReset() {
-    setConfig(null);
-    setInitData(null);
-  }
-
-  if (!config) return h(SetupScreen, { onStart: handleStart });
-  return h(DMRTable, { config, initialData: initData, onReset: handleReset });
+function App(){
+  const[config,setConfig]=useState(null);
+  const[init,setInit]=useState(null);
+  function go(cfg,data){setConfig(cfg);setInit(data||null);}
+  function reset(){setConfig(null);setInit(null);}
+  if(!config)return h(Setup,{onStart:go});
+  return h(DMRTable,{config,initialData:init,onReset:reset});
 }
-
-ReactDOM.createRoot(document.getElementById("root")).render(h(App, null));
+ReactDOM.createRoot(document.getElementById("root")).render(h(App,null));
 </script>
 </body>
 </html>
